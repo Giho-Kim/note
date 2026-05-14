@@ -1,0 +1,66 @@
+name: "td_jepa"
+seed: 42
+learning_steps: 1000000
+batch_size: 1024
+discount: 0.98
+eval_rollouts: 10
+eval_frequency: 20000
+z_inference_steps: 10000
+
+lr_predictor: 0.0001
+lr_phi: 0.0001
+lr_psi: 0.0001
+lr_actor: 0.0001
+weight_decay: 0.0
+encoder_target_tau: 0.005
+predictor_target_tau: 0.005
+phi_ortho_coef: 1.0
+psi_ortho_coef: 1.0
+train_goal_ratio: 0.5
+predictor_pessimism_penalty: 0.0
+actor_pessimism_penalty: 0.0
+stddev_clip: 0.3
+bc_coeff: 0.0
+log_eigvals: false
+scale_train_goals: false
+tilt: false
+tilt_beta: 0.995
+tilt_temperature: 20.0
+tilt_temperature_start: 20.0
+tilt_temperature_end: 1.0
+tilt_candidate_multiplier: 10
+tilt_ridge_alpha: 0.001
+tilt_ridge_min: 0.00000001
+
+actor_std: 0.2
+actor_use_full_encoder: true
+symmetric: false
+compile: false
+
+phi_dim: 50
+psi_dim: 50
+norm_z: true
+rgb_encoder_name: "IdentityNN"
+augmentator_name: "IdentityNN"
+
+phi_predictor_hidden_dim: 1024
+phi_predictor_hidden_layers: 1
+phi_predictor_embedding_layers: 2
+phi_predictor_num_parallel: 2
+
+psi_predictor_hidden_dim: 1024
+psi_predictor_hidden_layers: 1
+psi_predictor_embedding_layers: 2
+psi_predictor_num_parallel: 2
+
+phi_mlp_hidden_dim: 256
+phi_mlp_hidden_layers: 2
+phi_mlp_norm: true
+
+psi_mlp_hidden_dim: 256
+psi_mlp_hidden_layers: 2
+psi_mlp_norm: true
+
+actor_hidden_dim: 1024
+actor_hidden_layers: 1
+actor_embedding_layers: 2

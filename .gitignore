@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+
+wandb/
+datasets/
+saved_models/
+agents/*/saved_models/
+
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
