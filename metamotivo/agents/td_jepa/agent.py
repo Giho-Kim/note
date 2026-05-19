@@ -662,3 +662,18 @@ class TDJEPAAgent:
         }
         with (output_folder / "init_kwargs.json").open("w") as f:
             json.dump(init_kwargs, f, indent=4)
+# CUDA_VISIBLE_DEVICES=1 python main_exorl.py td_jepa walker rnd --tilt --tilt_temperature_start 20 --tilt_temperature_end 20 --eval_tasks stand walk run flip --tilt_ridge_alpha=1e-2 --tilt_init_geom_ratio 0.98 --seed 42 --tilt_candidate_multiplier 2
+#  CUDA_VISIBLE_DEVICES=0 python main_exorl.py td_jepa walker rnd --eval_tasks stand walk run flip --seed 46 --dataset_transitions 10000000
+# CUDA_VISIBLE_DEVICES=7 python main_exorl.py td_jepa walker rnd --tilt --tilt_temperature_start 20 --tilt_temperature_end 20 --eval_tasks stand walk run flip --tilt_ridge_alpha=1e-2 --tilt_init_geom_ratio 0.98 --seed 46 --tilt_candidate_multiplier 2
+# CUDA_VISIBLE_DEVICES=0  python main_exorl.py td_jepa walker rnd --tilt --tilt_temperature_start 20 --tilt_temperature_end 20 --eval_tasks stand walk run flip --tilt_ridge_alpha=1e-2 --tilt_init_geom_ratio 0.98 --seed 44 --tilt_candidate_multiplier 2 --dataset_transitions 100000000
+# CUDA_VISIBLE_DEVICES=1 python main_exorl.py fb point_mass_maze rnd --tilt --tilt_temperature_start 10 --tilt_temperature_end 10 --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt_init_geom_ratio 0.9 --z_mix_ratio 0.5 --seed 43 --tilt_candidate_multiplier 2
+
+# CUDA_VISIBLE_DEVICES=7 python main_exorl.py td_jepa point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --seed 43
+# --tilt_temperature_start 20 --tilt_temperature_end 20  --tilt_ridge_alpha=1e-1 --tilt_init_geom_ratio 0.98 --tilt_candidate_multiplier 2 --seed 42
+
+# CUDA_VISIBLE_DEVICES=0   python main_exorl.py td_jepa walker rnd --eval_tasks stand walk run flip --tilt_temperature_start 20 --tilt_temperature_end 20  --tilt_ridge_alpha=1e-2 --tilt_init_geom_ratio 0.98 --tilt_candidate_multiplier 2 --seed 42 --tilt_beta 0.99
+# python main_exorl.py td_jepa quadruped rnd  --eval_tasks stand jump roll roll_fast escape --tilt_temperature_start 20 --tilt_temperature_end 20  --tilt_ridge_alpha=1e-1 --tilt_init_geom_ratio 0.98 --tilt_candidate_multiplier 2 --seed 42
+# CUDA_VISIBLE_DEVICES=5 python main_exorl.py td_jepa quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 42
+# CUDA_VISIBLE_DEVICES=7  python main_exorl.py  td_jepa jaco rnd  --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --seed 42
+# CUDA_VISIBLE_DEVICES=4 python main_exorl.py td_jepa quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 46
+# CUDA_VISIBLE_DEVICES=6  python main_exorl.py  td_jepa jaco rnd  --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --seed 46

@@ -19,7 +19,12 @@ class _SingleBatchReplayBuffer:
     """Adapter that exposes one ZSRL batch via the MetaMotivo replay API."""
 
     def __init__(self, batch: Batch):
-        terminated = ~batch.not_dones.bool()
+        not_dones = batch.not_dones.bool()
+        if not_dones.ndim == 1:
+            not_dones = not_dones.unsqueeze(-1)
+        elif not_dones.shape[-1] != 1:
+            not_dones = not_dones.all(dim=-1, keepdim=True)
+        terminated = ~not_dones
         self._batch = {
             "observation": batch.observations,
             "action": batch.actions,
