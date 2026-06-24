@@ -5,6 +5,7 @@ wandb/
 datasets/
 saved_models/
 agents/*/saved_models/
+trajectory_plots/
 
 .pytest_cache/
 .mypy_cache/

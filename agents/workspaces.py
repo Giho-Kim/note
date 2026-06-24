@@ -105,6 +105,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         """
         Trains an offline RL algorithm on one task.
         """
+        run = None
         if self.wandb_logging:
             run = wandb.init(
                 config=agent_config,
@@ -159,6 +160,13 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     step=i,
                 )
                 eval_metrics = self.eval(agent=agent, tasks=tasks)
+                self._maybe_plot_point_mass_trajectories(
+                    agent=agent,
+                    tasks=tasks,
+                    step=i,
+                    run_name=model_path.name,
+                    wandb_run=run,
+                )
 
                 if eval_metrics["eval/task_reward_iqm"] > best_mean_task_reward:
                     logger.info(
@@ -641,6 +649,65 @@ class OfflineRLWorkspace(AbstractWorkspace):
             "collection/transitions": float(transitions_added),
             "collection/buffer_size": float(len(replay_buffer.storage["observations"])),
         }
+
+    def _maybe_plot_point_mass_trajectories(
+        self,
+        agent: Union[CQL, FB, CFB, GCIQL, SF, TDJEPA],
+        tasks: List[str],
+        step: int,
+        run_name: str,
+        wandb_run=None,
+    ) -> None:
+        if self.domain_name != "point_mass_maze":
+            return
+
+        if isinstance(agent, TDJEPA):
+            plot_agent = agent.agent
+            agent_kind = "td_jepa"
+            agent_label = "TD-JEPA"
+        elif isinstance(agent, FB):
+            if agent.tilt is None:
+                print(
+                    "[fb trajectories] skipped: FB tilt/gram is unavailable; "
+                    "run with --tilt to enable leverage-colored plots.",
+                    flush=True,
+                )
+                return
+            plot_agent = agent
+            agent_kind = "fb"
+            agent_label = "FB"
+        else:
+            return
+
+        from plot_td_jepa_trajectories import run_trajectory_plot
+
+        device = self.device.type if self.device.type in {"cpu", "cuda"} else "cpu"
+        output_dir = Path("trajectory_plots") / run_name
+        output_prefix = f"step_{step:08d}"
+        plot_path, npz_path, _ = run_trajectory_plot(
+            agent=plot_agent,
+            output_dir=output_dir,
+            rollouts=self.eval_rollouts,
+            seed=step,
+            device=device,
+            tasks=tasks,
+            output_prefix=output_prefix,
+            title=f"{agent_label} {run_name} step {step} eval trajectories",
+            agent_kind=agent_kind,
+        )
+        print(
+            f"[{agent_kind} trajectories] step={step} saved plot={plot_path} "
+            f"data={npz_path}",
+            flush=True,
+        )
+        if wandb_run is not None:
+            wandb_run.log(
+                {
+                    f"eval/{agent_kind}_trajectories": wandb.Image(str(plot_path)),
+                    "step": step,
+                },
+                step=step,
+            )
 
 
 class FinetuningWorkspace(OfflineRLWorkspace):

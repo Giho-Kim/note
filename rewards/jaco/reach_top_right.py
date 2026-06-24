@@ -5,5 +5,5 @@ from dm_control suite jaco
 
 import dmc
 
-env = dmc.make(name="jaco_reach_bottom_right")
+env = dmc.make(name="jaco_reach_top_right")
 reward_function = env._task.get_reward  # pylint: disable=protected-access
