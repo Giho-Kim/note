@@ -57,12 +57,10 @@ class TiltLatentSelector:
         if not feature_stats.isfinite().all() or not candidate_score.isfinite().all():
             logger.warning(
                 "TiltLatentSelector.refresh: non-finite values detected in "
-                "feature_stats (isfinite=%s) or candidate_score (isfinite=%s). "
-                "Skipping refresh and keeping existing z.",
+                "feature_stats (isfinite=%s) or candidate_score (isfinite=%s).",
                 feature_stats.isfinite().all().item(),
                 candidate_score.isfinite().all().item(),
             )
-            return self.z
 
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
@@ -78,10 +76,8 @@ class TiltLatentSelector:
         if min_eig < 0.1:
             logger.warning(
                 "TiltLatentSelector.refresh: gram matrix degenerate "
-                "(min_eigenvalue=%.4e). Resetting to identity.",
+                "(min_eigenvalue=%.4e).",
                 min_eig,
             )
-            dim = self.gram.shape[0]
-            self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)
         self.z = z_candidates[selected_idx]
         return self.z

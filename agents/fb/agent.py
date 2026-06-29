@@ -51,6 +51,7 @@ class FB(AbstractAgent):
         tau: float,
         learning_steps: int,
         tilt: bool,
+        tilt_start_step: int,
         tilting_by_z: bool,
         tilt_beta: float,
         tilt_temperature: float,
@@ -144,6 +145,7 @@ class FB(AbstractAgent):
         self._tilting_by_z = tilting_by_z
         self._tilt_ridge_alpha = tilt_ridge_alpha
         self._tilt_ridge_min = tilt_ridge_min
+        self._tilt_start_step = tilt_start_step
         self.std_dev_schedule = std_dev_schedule
         self.tilt = None
         if tilt:
@@ -207,7 +209,7 @@ class FB(AbstractAgent):
 
         perm = torch.randperm(self.batch_size)
         backward_input = batch.observations[perm]
-        if self.tilt is not None:
+        if self.tilt is not None and step >= self._tilt_start_step:
             self.tilt.temperature = self._tilt_temperature(step)
             self.tilt.refresh(
                 init_features=batch.observations,
@@ -257,11 +259,14 @@ class FB(AbstractAgent):
 
         return metrics
 
+    def _tilt_active(self, step: int) -> bool:
+        return self.tilt is not None and step >= self._tilt_start_step
+
     @torch.no_grad()
     def sample_mixed_z(
         self, train_goal: Optional[torch.Tensor] = None, step: Optional[int] = None
     ) -> torch.Tensor:
-        if self.tilt is None:
+        if not self._tilt_active(step):
             zs = self.sample_z(size=self.batch_size)
         else:
             zs = self.tilt.z.clone()
@@ -269,7 +274,7 @@ class FB(AbstractAgent):
         if train_goal is not None:
             mix_indices = np.where(np.random.rand(self.batch_size) < self._z_mix_ratio)[0]
             if len(mix_indices) > 0:
-                if self.tilt is None:
+                if not self._tilt_active(step):
                     mix_zs = self.FB.backward_representation(
                         train_goal[mix_indices]
                     ).detach()

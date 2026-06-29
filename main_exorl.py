@@ -38,6 +38,7 @@ parser.add_argument("--tilt_candidate_multiplier", type=int)
 parser.add_argument("--tilt_init_geom_ratio", type=float)
 parser.add_argument("--tilt_ridge_alpha", type=float)
 parser.add_argument("--tilt_ridge_min", type=float)
+parser.add_argument("--tilt_start_step", type=int)
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -122,6 +123,7 @@ tilt_candidate_multiplier_override = cli_args.pop("tilt_candidate_multiplier", N
 tilt_init_geom_ratio_override = cli_args.pop("tilt_init_geom_ratio", None)
 tilt_ridge_alpha_override = cli_args.pop("tilt_ridge_alpha", None)
 tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
+tilt_start_step_override = cli_args.pop("tilt_start_step", None)
 config.update(cli_args)
 if tilt_beta_override is not None:
     config["tilt_beta"] = tilt_beta_override
@@ -156,6 +158,10 @@ if "tilt_ridge_alpha" not in config:
     config["tilt_ridge_alpha"] = 1e-3 if config["algorithm"] == "td_jepa" else 1e-1
 if "tilt_ridge_min" not in config:
     config["tilt_ridge_min"] = 1e-8
+if tilt_start_step_override is not None:
+    config["tilt_start_step"] = tilt_start_step_override
+if "tilt_start_step" not in config:
+    config["tilt_start_step"] = 0
 
 config["device"] = torch.device(
     "cuda"
@@ -338,6 +344,7 @@ elif config["algorithm"] == "td_jepa":
         tilt_init_geom_ratio=config["tilt_init_geom_ratio"],
         tilt_ridge_alpha=config["tilt_ridge_alpha"],
         tilt_ridge_min=config["tilt_ridge_min"],
+        tilt_start_step=config["tilt_start_step"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -427,6 +434,7 @@ elif config["algorithm"] == "fb":
         tilt_init_geom_ratio=config["tilt_init_geom_ratio"],
         tilt_ridge_alpha=config["tilt_ridge_alpha"],
         tilt_ridge_min=config["tilt_ridge_min"],
+        tilt_start_step=config["tilt_start_step"],
         device=config["device"],
         name=config["name"],
     )
