@@ -1,9 +1,12 @@
 """Reusable latent selection utilities for tilt-style agents."""
 
+import logging
 from dataclasses import dataclass
 from typing import Callable, Tuple
 
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 ScoreFn = Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
@@ -50,6 +53,17 @@ class TiltLatentSelector:
         candidate_init_weights = init_weights[obs_idx]
 
         candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
+
+        if not feature_stats.isfinite().all() or not candidate_score.isfinite().all():
+            logger.warning(
+                "TiltLatentSelector.refresh: non-finite values detected in "
+                "feature_stats (isfinite=%s) or candidate_score (isfinite=%s). "
+                "Skipping refresh and keeping existing z.",
+                feature_stats.isfinite().all().item(),
+                candidate_score.isfinite().all().item(),
+            )
+            return self.z
+
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
         prob = torch.softmax(logits, dim=0)
