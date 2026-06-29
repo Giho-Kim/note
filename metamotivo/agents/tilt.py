@@ -73,5 +73,15 @@ class TiltLatentSelector:
         weighted_features = feature_stats * candidate_weights.unsqueeze(-1)
         gram_batch = feature_stats.T @ weighted_features
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)
+
+        min_eig = torch.linalg.eigvalsh(self.gram).min().item()
+        if min_eig < 0.1:
+            logger.warning(
+                "TiltLatentSelector.refresh: gram matrix degenerate "
+                "(min_eigenvalue=%.4e). Resetting to identity.",
+                min_eig,
+            )
+            dim = self.gram.shape[0]
+            self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)
         self.z = z_candidates[selected_idx]
         return self.z

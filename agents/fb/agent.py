@@ -1,11 +1,14 @@
 """Module defining the Forward-Backward Agent."""
 
+import logging
 import math
 from pathlib import Path
 from typing import Tuple, Dict, Optional
 
 import torch
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from agents.fb.models import ForwardBackwardRepresentation, ActorModel
 from agents.base import AbstractAgent, Batch, AbstractGaussianActor
@@ -326,10 +329,15 @@ class FB(AbstractAgent):
         features = 0.5 * (target_f1 + target_f2)
 
         trace_g = torch.trace(self.tilt.gram)
-        lam = max(
-            self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0],
-            self._tilt_ridge_min,
-        )
+        alpha_lam = self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0]
+        lam = max(alpha_lam, self._tilt_ridge_min)
+        if alpha_lam < self._tilt_ridge_min:
+            logger.warning(
+                "FB.score_and_features: tilt_ridge_min activated "
+                "(alpha_lam=%.4e < ridge_min=%.4e). gram may be degenerate.",
+                alpha_lam,
+                self._tilt_ridge_min,
+            )
         identity = torch.eye(
             features.shape[-1], device=features.device, dtype=features.dtype
         )
