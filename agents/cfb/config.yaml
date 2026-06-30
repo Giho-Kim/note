@@ -47,3 +47,12 @@ alpha: 0.01
 target_conservative_penalty: 50.0
 lagrange: True
 
+# tilt parameters
+tilt: false
+tilt_beta: 0.995
+tilt_temperature: 20.0
+tilt_temperature_start: 20.0
+tilt_temperature_end: 1.0
+tilt_candidate_multiplier: 4
+tilt_ridge_alpha: 0.1
+tilt_ridge_min: 0.00000001

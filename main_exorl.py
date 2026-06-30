@@ -91,7 +91,7 @@ else:
 
 working_dir = Path.cwd()
 if args.tilt:
-    if args.algorithm not in {"td_jepa", "fb"}:
+    if args.algorithm not in {"td_jepa", "fb", "vcfb", "mcfb"}:
         raise ValueError(f"--tilt is not supported for algorithm '{args.algorithm}'.")
 
 if args.algorithm in ("vcfb", "mcfb"):
@@ -497,6 +497,18 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         alpha=config["alpha"],
         target_conservative_penalty=config["target_conservative_penalty"],
         lagrange=config["lagrange"],
+        learning_steps=config["learning_steps"],
+        tilt=config["tilt"],
+        tilting_by_z=config["tilting_by_z"],
+        tilt_beta=config["tilt_beta"],
+        tilt_temperature=config["tilt_temperature"],
+        tilt_temperature_start=config["tilt_temperature_start"],
+        tilt_temperature_end=config["tilt_temperature_end"],
+        tilt_candidate_multiplier=config["tilt_candidate_multiplier"],
+        tilt_init_geom_ratio=config["tilt_init_geom_ratio"],
+        tilt_ridge_alpha=config["tilt_ridge_alpha"],
+        tilt_ridge_min=config["tilt_ridge_min"],
+        tilt_start_step=config["tilt_start_step"],
     )
 
     replay_buffer = FBReplayBuffer(

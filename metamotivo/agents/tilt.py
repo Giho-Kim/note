@@ -51,7 +51,6 @@ class TiltLatentSelector:
             init_weights, num_samples=n_candidates, replacement=True
         )
         feature_candidates = init_features[obs_idx]
-        candidate_init_weights = init_weights[obs_idx]
 
         candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
 
@@ -70,9 +69,10 @@ class TiltLatentSelector:
         prob = torch.softmax(logits, dim=0)
         selected_idx = torch.multinomial(prob, num_samples=n, replacement=False)
 
-        candidate_weights = candidate_init_weights / candidate_init_weights.sum()
-        weighted_features = feature_stats * candidate_weights.unsqueeze(-1)
-        gram_batch = feature_stats.T @ weighted_features
+        # obs candidates are already sampled proportionally to init_weights, so
+        # the Gram matrix is a plain (uniform) average over them. Re-weighting by
+        # candidate_init_weights here would apply init_geom_ratio twice.
+        gram_batch = feature_stats.T @ feature_stats / feature_stats.shape[0]
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)
 
         if self._refresh_count % 10 == 0:

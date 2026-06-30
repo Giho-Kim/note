@@ -50,6 +50,18 @@ class CFB(FB):
         vcfb: bool,
         mcfb: bool,
         lagrange: bool = False,
+        learning_steps: int = 1000000,
+        tilt: bool = False,
+        tilt_start_step: int = 0,
+        tilting_by_z: bool = False,
+        tilt_beta: float = 0.995,
+        tilt_temperature: float = 20.0,
+        tilt_temperature_start: float = 20.0,
+        tilt_temperature_end: float = 1.0,
+        tilt_candidate_multiplier: int = 4,
+        tilt_init_geom_ratio: float = 0.9,
+        tilt_ridge_alpha: float = 0.1,
+        tilt_ridge_min: float = 1e-8,
     ):
         assert vcfb != mcfb
         self.vcfb = vcfb
@@ -92,6 +104,18 @@ class CFB(FB):
             tau=tau,
             device=device,
             name=name,
+            learning_steps=learning_steps,
+            tilt=tilt,
+            tilt_start_step=tilt_start_step,
+            tilting_by_z=tilting_by_z,
+            tilt_beta=tilt_beta,
+            tilt_temperature=tilt_temperature,
+            tilt_temperature_start=tilt_temperature_start,
+            tilt_temperature_end=tilt_temperature_end,
+            tilt_candidate_multiplier=tilt_candidate_multiplier,
+            tilt_init_geom_ratio=tilt_init_geom_ratio,
+            tilt_ridge_alpha=tilt_ridge_alpha,
+            tilt_ridge_min=tilt_ridge_min,
         )
 
         # total_action_samples must be divisible by 4
