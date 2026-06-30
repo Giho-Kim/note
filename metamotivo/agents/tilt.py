@@ -27,6 +27,7 @@ class TiltLatentSelector:
         dim = self.z.shape[-1]
         self.gram = torch.eye(dim, device=self.z.device, dtype=self.z.dtype)
         self.running_mean = torch.zeros(dim, device=self.z.device, dtype=self.z.dtype)
+        self._refresh_count = 0
 
     @torch.no_grad()
     def refresh(
@@ -54,13 +55,15 @@ class TiltLatentSelector:
 
         candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
 
-        if not feature_stats.isfinite().all() or not candidate_score.isfinite().all():
-            logger.warning(
-                "TiltLatentSelector.refresh: non-finite values detected in "
-                "feature_stats (isfinite=%s) or candidate_score (isfinite=%s).",
-                feature_stats.isfinite().all().item(),
-                candidate_score.isfinite().all().item(),
-            )
+        self._refresh_count += 1
+        if self._refresh_count % 10 == 0:
+            if not feature_stats.isfinite().all() or not candidate_score.isfinite().all():
+                logger.warning(
+                    "TiltLatentSelector.refresh: non-finite values detected in "
+                    "feature_stats (isfinite=%s) or candidate_score (isfinite=%s).",
+                    feature_stats.isfinite().all().item(),
+                    candidate_score.isfinite().all().item(),
+                )
 
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
@@ -72,14 +75,15 @@ class TiltLatentSelector:
         gram_batch = feature_stats.T @ weighted_features
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)
 
-        min_eig = torch.linalg.eigvalsh(self.gram).min().item()
-        if min_eig < 1e-3:
-            logger.warning(
-                "TiltLatentSelector.refresh: gram matrix degenerate "
-                "(min_eigenvalue=%.4e). Resetting to identity.",
-                min_eig,
-            )
-            dim = self.gram.shape[0]
-            self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)
+        if self._refresh_count % 10 == 0:
+            min_eig = torch.linalg.eigvalsh(self.gram).min().item()
+            if min_eig < 1e-3:
+                logger.warning(
+                    "TiltLatentSelector.refresh: gram matrix degenerate "
+                    "(min_eigenvalue=%.4e). Resetting to identity.",
+                    min_eig,
+                )
+                dim = self.gram.shape[0]
+                self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)
         self.z = z_candidates[selected_idx]
         return self.z
