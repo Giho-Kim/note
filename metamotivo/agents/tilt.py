@@ -27,7 +27,18 @@ class TiltLatentSelector:
         dim = self.z.shape[-1]
         self.gram = torch.eye(dim, device=self.z.device, dtype=self.z.dtype)
         self.running_mean = torch.zeros(dim, device=self.z.device, dtype=self.z.dtype)
+        # Running mean-square of the (unbounded) forward features, used as a
+        # single global scale so the Gram matrix stays well-conditioned even if
+        # the FB feature norm diverges. Relative magnitudes across candidates are
+        # preserved because every feature is divided by the *same* scalar.
+        # float64 so squaring a finite-but-huge feature (which would overflow
+        # float32 at ~3.4e38) does not turn the scale into inf.
+        self.feat_ms = torch.ones((), device=self.z.device, dtype=torch.float64)
         self._refresh_count = 0
+
+    def feature_scale(self) -> torch.Tensor:
+        """Global scale (RMS) applied to forward features before the Gram."""
+        return (torch.sqrt(self.feat_ms) + 1e-8).to(self.z.dtype)
 
     @torch.no_grad()
     def refresh(
@@ -56,32 +67,46 @@ class TiltLatentSelector:
 
         self._refresh_count += 1
         if self._refresh_count % 10 == 0:
-            if not feature_stats.isfinite().all() or not candidate_score.isfinite().all():
-                logger.warning(
-                    "TiltLatentSelector.refresh: non-finite values detected in "
-                    "feature_stats (isfinite=%s) or candidate_score (isfinite=%s).",
-                    feature_stats.isfinite().all().item(),
-                    candidate_score.isfinite().all().item(),
-                )
+            logger.warning(
+                "TiltLatentSelector.refresh: diag feat_max=%.4e feat_finite=%s "
+                "score_finite=%s",
+                feature_stats.abs().max().item(),
+                feature_stats.isfinite().all().item(),
+                candidate_score.isfinite().all().item(),
+            )
 
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
         prob = torch.softmax(logits, dim=0)
         selected_idx = torch.multinomial(prob, num_samples=n, replacement=False)
 
+        # Update the running feature scale (EMA of per-element mean-square), then
+        # normalise features by that single scalar before forming the Gram. This
+        # bounds the Gram's magnitude (no float32 overflow) while preserving the
+        # relative sizes of candidate features. score_and_features divides its
+        # query by the same scale so the leverage score stays consistent.
+        self.feat_ms.mul_(self.beta).add_(
+            (1 - self.beta) * (feature_stats.double() ** 2).mean().detach()
+        )
+        f_tilde = feature_stats / self.feature_scale()
+
         # obs candidates are already sampled proportionally to init_weights, so
         # the Gram matrix is a plain (uniform) average over them. Re-weighting by
         # candidate_init_weights here would apply init_geom_ratio twice.
-        gram_batch = feature_stats.T @ feature_stats / feature_stats.shape[0]
+        gram_batch = f_tilde.T @ f_tilde / f_tilde.shape[0]
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)
 
         if self._refresh_count % 10 == 0:
+            gram_finite = self.gram.isfinite().all().item()
             min_eig = torch.linalg.eigvalsh(self.gram).min().item()
             if min_eig < 1e-3:
                 logger.warning(
                     "TiltLatentSelector.refresh: gram matrix degenerate "
-                    "(min_eigenvalue=%.4e). Resetting to identity.",
+                    "(min_eigenvalue=%.4e, gram_finite=%s, gram_batch_max=%.4e). "
+                    "Resetting to identity.",
                     min_eig,
+                    gram_finite,
+                    gram_batch.abs().max().item(),
                 )
                 dim = self.gram.shape[0]
                 self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)

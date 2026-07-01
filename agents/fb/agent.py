@@ -347,7 +347,9 @@ class FB(AbstractAgent):
             features.shape[-1], device=features.device, dtype=features.dtype
         )
         ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
-        query = z if self._tilting_by_z else features
+        # The Gram is built from features divided by tilt.feature_scale(), so the
+        # query must use the same scale to keep the leverage score consistent.
+        query = z if self._tilting_by_z else features / self.tilt.feature_scale()
         projected = query @ ginv
         score = torch.sum(projected * query, dim=1)
         return score, features
