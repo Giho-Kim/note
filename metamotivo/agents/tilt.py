@@ -66,14 +66,6 @@ class TiltLatentSelector:
         candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
 
         self._refresh_count += 1
-        if self._refresh_count % 10 == 0:
-            logger.warning(
-                "TiltLatentSelector.refresh: diag feat_max=%.4e feat_finite=%s "
-                "score_finite=%s",
-                feature_stats.abs().max().item(),
-                feature_stats.isfinite().all().item(),
-                candidate_score.isfinite().all().item(),
-            )
 
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
@@ -90,25 +82,19 @@ class TiltLatentSelector:
         )
         f_tilde = feature_stats / self.feature_scale()
 
+
+        if self._refresh_count % 10000 == 0:
+            logger.warning(
+                "TiltLatentSelector.refresh: diag feat_max=%.4e feat_finite=%s ",
+                feature_stats.abs().max().item(),
+                feature_stats.abs().min().item(),
+            )
+
         # obs candidates are already sampled proportionally to init_weights, so
         # the Gram matrix is a plain (uniform) average over them. Re-weighting by
         # candidate_init_weights here would apply init_geom_ratio twice.
         gram_batch = f_tilde.T @ f_tilde / f_tilde.shape[0]
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)
 
-        if self._refresh_count % 10 == 0:
-            gram_finite = self.gram.isfinite().all().item()
-            min_eig = torch.linalg.eigvalsh(self.gram).min().item()
-            if min_eig < 1e-3:
-                logger.warning(
-                    "TiltLatentSelector.refresh: gram matrix degenerate "
-                    "(min_eigenvalue=%.4e, gram_finite=%s, gram_batch_max=%.4e). "
-                    "Resetting to identity.",
-                    min_eig,
-                    gram_finite,
-                    gram_batch.abs().max().item(),
-                )
-                dim = self.gram.shape[0]
-                self.gram = torch.eye(dim, device=self.gram.device, dtype=self.gram.dtype)
         self.z = z_candidates[selected_idx]
         return self.z
