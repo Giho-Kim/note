@@ -59,6 +59,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
     Trains/evals/rollouts an offline RL agent given
     """
     COLLECTION_TILT_TEMPERATURE = 5.0
+    TILT_VERBOSE_INTERVAL = 2000
 
     def __init__(
         self,
@@ -74,6 +75,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         eval_std: Optional[float] = None,  # FB only
         collection_interval: int = 0,
         collection_episodes: int = 0,
+        verbose: bool = False,
     ):
         super().__init__(
             env=reward_constructor._env,
@@ -94,6 +96,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
         self.device = device
         self.collection_interval = collection_interval
         self.collection_episodes = collection_episodes
+        self.verbose = verbose
+        self._tilt_header_printed = False
 
     def train(
         self,
@@ -146,6 +150,9 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
             batch = replay_buffer.sample(agent.batch_size)
             train_metrics = agent.update(batch=batch, step=i)
+
+            if self.verbose and i % self.TILT_VERBOSE_INTERVAL == 0:
+                self._log_tilt_health(agent=agent, step=i)
 
             eval_metrics = {}
             collection_metrics = {}
@@ -522,6 +529,91 @@ class OfflineRLWorkspace(AbstractWorkspace):
             )
 
         return metrics
+
+    @torch.no_grad()
+    def _log_tilt_health(
+        self,
+        agent: Union[CQL, FB, CFB, GCIQL, SF, TDJEPA],
+        step: int,
+    ) -> None:
+        """Prints internal tilt diagnostics so `--verbose` runs can confirm the
+        latent selector is healthy (well-conditioned Gram, stable feature scale,
+        diverse z pool). Only meaningful once tilting is active."""
+        if not isinstance(agent, FB) or agent.tilt is None:
+            return
+        if step < agent._tilt_start_step:  # pylint: disable=protected-access
+            return
+
+        tilt = agent.tilt
+        gram = tilt.gram
+        dim = gram.shape[0]
+
+        # --- Gram conditioning + the effective ridge that score_and_features uses ---
+        try:
+            gram_eig = torch.linalg.eigvalsh(gram)
+            eig_min = float(gram_eig[0])
+            eig_max = float(gram_eig[-1])
+            cond = eig_max / max(eig_min, 1e-12)
+        except Exception:  # pylint: disable=broad-except
+            eig_min = eig_max = cond = float("nan")
+        trace_g = float(torch.trace(gram))
+        alpha_lam = agent._tilt_ridge_alpha * trace_g / dim  # noqa: SLF001
+        lam = max(alpha_lam, agent._tilt_ridge_min)  # noqa: SLF001
+        ridge_clamped = alpha_lam < agent._tilt_ridge_min  # noqa: SLF001
+
+        # --- feature scale (RMS EMA that keeps the Gram from overflowing) ---
+        feat_scale = float(tilt.feature_scale())
+
+        # --- z pool diversity: participation ratio (effective rank in [1, D]) and
+        #     mean |cosine| between pooled z's. Collapse => PR->1, |cos|->1. ---
+        z = tilt.z
+        try:
+            cov = (z.T @ z) / z.shape[0]
+            z_eig = torch.linalg.eigvalsh(cov).clamp_min(0.0)
+            part_ratio = float((z_eig.sum() ** 2) / (z_eig.pow(2).sum() + 1e-12))
+        except Exception:  # pylint: disable=broad-except
+            part_ratio = float("nan")
+        z_norm = torch.nn.functional.normalize(z, dim=1)
+        cos = z_norm @ z_norm.T
+        off = ~torch.eye(z.shape[0], dtype=torch.bool, device=z.device)
+        mean_abs_cos = float(cos[off].abs().mean())
+
+        # --- selection probability spread from the most recent refresh(), vs.
+        #     the uniform baseline 1/n_candidates a non-tilted selector would give ---
+        prob_min = tilt.last_prob_min
+        prob_max = tilt.last_prob_max
+        n_candidates = tilt.candidate_multiplier * z.shape[0]
+        prob_uniform = 1.0 / n_candidates
+
+        columns = [
+            ("step", f"{step}"),
+            ("temp", f"{tilt.temperature:.3f}"),
+            ("f_scale", f"{feat_scale:.3e}"),
+            ("eig_min", f"{eig_min:.3e}"),
+            ("eig_max", f"{eig_max:.3e}"),
+            ("cond", f"{cond:.2e}"),
+            ("trace", f"{trace_g:.3e}"),
+            ("lam", f"{lam:.3e}"),
+            ("clamp", f"{ridge_clamped}"),
+            ("eff_rk", f"{part_ratio:.2f}/{dim}"),
+            ("mcos", f"{mean_abs_cos:.3f}"),
+            ("p_min", f"{prob_min:.3e}"),
+            ("p_max", f"{prob_max:.3e}"),
+            ("p_unif", f"{prob_uniform:.3e}"),
+        ]
+        widths = [max(len(name), len(value)) for name, value in columns]
+
+        if not self._tilt_header_printed:
+            header = "  ".join(
+                name.rjust(width) for (name, _), width in zip(columns, widths)
+            )
+            print(f"[tilt health]\n{header}", flush=True)
+            self._tilt_header_printed = True
+
+        row = "  ".join(
+            value.rjust(width) for (_, value), width in zip(columns, widths)
+        )
+        print(row, flush=True)
 
     def _refresh_collection_tilt(
         self,

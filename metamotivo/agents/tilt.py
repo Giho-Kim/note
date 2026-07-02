@@ -35,6 +35,8 @@ class TiltLatentSelector:
         # float32 at ~3.4e38) does not turn the scale into inf.
         self.feat_ms = torch.ones((), device=self.z.device, dtype=torch.float64)
         self._refresh_count = 0
+        self.last_prob_min = float("nan")
+        self.last_prob_max = float("nan")
 
     def feature_scale(self) -> torch.Tensor:
         """Global scale (RMS) applied to forward features before the Gram."""
@@ -70,6 +72,8 @@ class TiltLatentSelector:
         logits = candidate_score / self.temperature
         logits = logits - logits.max()
         prob = torch.softmax(logits, dim=0)
+        self.last_prob_min = float(prob.min())
+        self.last_prob_max = float(prob.max())
         selected_idx = torch.multinomial(prob, num_samples=n, replacement=False)
 
         # Update the running feature scale (EMA of per-element mean-square), then

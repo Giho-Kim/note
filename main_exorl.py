@@ -62,6 +62,7 @@ parser.add_argument("--action_condition_index", type=int)
 parser.add_argument("--action_condition_value", type=float)
 parser.add_argument("--cql_alpha", type=float, default=0.01)
 parser.add_argument("--z_mix_ratio", type=float)
+parser.add_argument("--verbose", action="store_true")
 args = parser.parse_args()
 
 if args.wandb_logging == "True":
@@ -633,6 +634,7 @@ workspace = OfflineRLWorkspace(
     device=config["device"],
     collection_interval=config["collection_interval"],
     collection_episodes=config["collection_episodes"],
+    verbose=config.get("verbose", False),
 )
 
 if __name__ == "__main__":
