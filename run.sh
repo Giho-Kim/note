@@ -1,7 +1,4 @@
-while true; do
-    python main_exorl.py mcfb quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 42 --z_mix_ratio 0.5
-    python main_exorl.py mcfb quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 43 --z_mix_ratio 0.5
-    python main_exorl.py mcfb quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 44 --z_mix_ratio 0.5
-    python main_exorl.py mcfb quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 45 --z_mix_ratio 0.5
-    sleep 1
-done
+export WANDB_PROJECT=D-NORMAL
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.5  --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 4 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 43 --verbose
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.5  --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 4 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 44 --verbose
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.5  --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 4 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 45 --verbose

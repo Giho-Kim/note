@@ -85,6 +85,51 @@ def flip(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
 
 
 @SUITE.add("benchmarking")
+def walk_backward(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+    """Returns the backward Walk task."""
+    physics = Physics.from_xml_string(*get_model_and_assets())
+    task = PlanarWalker(move_speed=_WALK_SPEED, backward=True, random=random)
+    environment_kwargs = environment_kwargs or {}
+    return control.Environment(
+        physics,
+        task,
+        time_limit=time_limit,
+        control_timestep=_CONTROL_TIMESTEP,
+        **environment_kwargs
+    )
+
+
+@SUITE.add("benchmarking")
+def run_backward(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+    """Returns the backward Run task."""
+    physics = Physics.from_xml_string(*get_model_and_assets())
+    task = PlanarWalker(move_speed=_RUN_SPEED, backward=True, random=random)
+    environment_kwargs = environment_kwargs or {}
+    return control.Environment(
+        physics,
+        task,
+        time_limit=time_limit,
+        control_timestep=_CONTROL_TIMESTEP,
+        **environment_kwargs
+    )
+
+
+@SUITE.add("benchmarking")
+def flip_backward(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
+    """Returns the backward Flip task."""
+    physics = Physics.from_xml_string(*get_model_and_assets())
+    task = PlanarWalker(move_speed=_RUN_SPEED, flip=True, backward=True, random=random)
+    environment_kwargs = environment_kwargs or {}
+    return control.Environment(
+        physics,
+        task,
+        time_limit=time_limit,
+        control_timestep=_CONTROL_TIMESTEP,
+        **environment_kwargs
+    )
+
+
+@SUITE.add("benchmarking")
 def multitask(time_limit=_DEFAULT_TIME_LIMIT, random=None, environment_kwargs=None):
     """Returns the Run task."""
     physics = Physics.from_xml_string(*get_model_and_assets())
@@ -126,19 +171,25 @@ class Physics(mujoco.Physics):
 class PlanarWalker(base.Task):
     """A planar walker task."""
 
-    def __init__(self, move_speed, flip=False, random=None):
+    def __init__(self, move_speed, flip=False, backward=False, random=None):
         """Initializes an instance of `PlanarWalker`.
 
         Args:
           move_speed: A float. If this value is zero, reward is given simply for
             standing up. Otherwise this specifies a target horizontal velocity for
             the walking task.
+          flip: A bool. Whether to reward angular momentum (flipping) instead of
+            horizontal velocity.
+          backward: A bool. Whether to reward movement in the negative direction
+            (backward walking/running, or flipping the opposite way) instead of
+            the positive direction.
           random: Optional, either a `numpy.random.RandomState` instance, an
             integer seed for creating a new `RandomState`, or None to select a seed
             automatically (default).
         """
         self._move_speed = move_speed
         self._flip = flip
+        self._backward = backward
         super().__init__(random=random)
 
     def initialize_episode(self, physics):
@@ -173,16 +224,22 @@ class PlanarWalker(base.Task):
         stand_reward = (3 * standing + upright) / 4
 
         if self._flip:
+            angmomentum = physics.angmomentum()
+            if self._backward:
+                angmomentum = -angmomentum
             move_reward = rewards.tolerance(
-                physics.angmomentum(),
+                angmomentum,
                 bounds=(_SPIN_SPEED, float("inf")),
                 margin=_SPIN_SPEED,
                 value_at_margin=0,
                 sigmoid="linear",
             )
         else:
+            velocity = physics.horizontal_velocity()
+            if self._backward:
+                velocity = -velocity
             move_reward = rewards.tolerance(
-                physics.horizontal_velocity(),
+                velocity,
                 bounds=(self._move_speed, float("inf")),
                 margin=self._move_speed / 2,
                 value_at_margin=0.5,

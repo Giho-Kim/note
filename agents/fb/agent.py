@@ -141,7 +141,6 @@ class FB(AbstractAgent):
         self._learning_steps = max(1, learning_steps)
         self._tilt_temperature_start = tilt_temperature_start
         self._tilt_temperature_end = tilt_temperature_end
-        self._tilt_candidate_multiplier = tilt_candidate_multiplier
         self._tilting_by_z = tilting_by_z
         self._tilt_ridge_alpha = tilt_ridge_alpha
         self._tilt_ridge_min = tilt_ridge_min
@@ -274,48 +273,19 @@ class FB(AbstractAgent):
         if train_goal is not None:
             mix_indices = np.where(np.random.rand(self.batch_size) < self._z_mix_ratio)[0]
             if len(mix_indices) > 0:
-                if not self._tilt_active(step):
-                    mix_zs = self.FB.backward_representation(
-                        train_goal[mix_indices]
-                    ).detach()
-                    mix_zs = math.sqrt(
-                        self._z_dimension
-                    ) * torch.nn.functional.normalize(mix_zs, dim=1)
-                else:
-                    if step is None:
-                        raise ValueError("step is required when sampling tilted goal z.")
-                    mix_zs = self.sample_tilted_goal_z(
-                        train_goal=train_goal, size=len(mix_indices), step=step
-                    )
+                # Goal-based mix is always a plain uniform draw of B(goal): its job
+                # is to ground z on the empirical goal distribution, so it stays an
+                # un-tilted anchor. Leverage/coverage tilting lives only on the
+                # sphere prior pool (tilt.z), not here.
+                mix_zs = self.FB.backward_representation(
+                    train_goal[mix_indices]
+                ).detach()
+                mix_zs = math.sqrt(
+                    self._z_dimension
+                ) * torch.nn.functional.normalize(mix_zs, dim=1)
                 zs[mix_indices] = mix_zs
 
         return zs
-
-    @torch.no_grad()
-    def sample_tilted_goal_z(
-        self, train_goal: torch.Tensor, size: int, step: int
-    ) -> torch.Tensor:
-        candidate_size = self._tilt_candidate_multiplier * size
-        candidate_indices = torch.randint(
-            0, train_goal.shape[0], (candidate_size,), device=train_goal.device
-        )
-        goal_candidates = train_goal[candidate_indices]
-        z_candidates = self.FB.backward_representation(goal_candidates).detach()
-        z_candidates = math.sqrt(self._z_dimension) * torch.nn.functional.normalize(
-            z_candidates, dim=1
-        )
-
-        candidate_score, _ = self.score_and_features(
-            observations=goal_candidates,
-            z=z_candidates,
-            step=step,
-        )
-        logits = candidate_score / self.tilt.temperature
-        logits = logits - logits.max()
-        prob = torch.softmax(logits, dim=0)
-        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
-
-        return z_candidates[selected_idx]
 
     @torch.no_grad()
     def score_and_features(
@@ -332,6 +302,15 @@ class FB(AbstractAgent):
             action=actions,
         )
         features = 0.5 * (target_f1 + target_f2)
+
+        # Cap each candidate's feature norm at the p99 of this batch so a
+        # handful of oversized-norm candidates can't dominate the leverage
+        # score (and the Gram it feeds into); candidates below the cap are
+        # left untouched, only the top outliers are pulled down to it.
+        feature_norms = features.norm(dim=-1)
+        norm_hi = torch.quantile(feature_norms, 0.99)
+        clipped_norms = torch.clamp(feature_norms, max=norm_hi)
+        features = features * (clipped_norms / feature_norms).unsqueeze(-1)
 
         trace_g = torch.trace(self.tilt.gram)
         alpha_lam = self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0]

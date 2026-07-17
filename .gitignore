@@ -11,3 +11,16 @@ trajectory_plots/
 .mypy_cache/
 .ipynb_checkpoints/
 
+# Downloaded model checkpoints / eval artifacts
+downloads/
+
+# Local tooling and editor temp files
+.claude/
+*.swp
+
+# Scratch visualization workspace
+scratch_viz/
+
+# Untitled scratch notebooks
+Untitled*.ipynb
+

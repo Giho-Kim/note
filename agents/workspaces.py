@@ -76,6 +76,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         collection_interval: int = 0,
         collection_episodes: int = 0,
         verbose: bool = False,
+        save_every: bool = False,
     ):
         super().__init__(
             env=reward_constructor._env,
@@ -97,6 +98,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         self.collection_interval = collection_interval
         self.collection_episodes = collection_episodes
         self.verbose = verbose
+        self.save_every = save_every  # save a checkpoint at every eval step, not just the best
         self._tilt_header_printed = False
 
     def train(
@@ -174,6 +176,15 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     run_name=model_path.name,
                     wandb_run=run,
                 )
+
+                if self.save_every:
+                    checkpoint_dir = model_path / "checkpoints"
+                    agent._name = i  # pylint: disable=protected-access
+                    checkpoint_path = agent.save(checkpoint_dir)
+                    if self.wandb_logging:
+                        run.save(
+                            checkpoint_path.as_posix(), base_path=model_path.as_posix()
+                        )
 
                 if eval_metrics["eval/task_reward_iqm"] > best_mean_task_reward:
                     logger.info(
