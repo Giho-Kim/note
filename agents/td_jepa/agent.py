@@ -86,6 +86,7 @@ class TDJEPA(AbstractAgent):
         tilt_init_geom_ratio: float,
         tilt_ridge_alpha: float,
         tilt_ridge_min: float,
+        tilt_start_step: int,
         actor_std: float,
         actor_use_full_encoder: bool,
         symmetric: bool,
@@ -204,6 +205,7 @@ class TDJEPA(AbstractAgent):
             tilt_init_geom_ratio=tilt_init_geom_ratio,
             tilt_ridge_alpha=tilt_ridge_alpha,
             tilt_ridge_min=tilt_ridge_min,
+            tilt_start_step=tilt_start_step,
         )
         cfg = TDJEPAAgentConfig(model=model_cfg, train=train_cfg, compile=compile)
         self.agent = MetaTDJEPAAgent(obs_space=self._obs_space, action_dim=action_length, cfg=cfg)
@@ -225,7 +227,7 @@ class TDJEPA(AbstractAgent):
     def update(self, batch: Batch, step: int) -> Dict[str, float]:
         init_obs = batch.observations.detach().cpu().numpy()
         init_steps = None if batch.timesteps is None else batch.timesteps.detach().cpu().numpy()
-        if self.agent.tilt is not None:
+        if self.agent._tilt_active(step):  # pylint: disable=protected-access
             progress = min(max(step, 0) / self.agent.cfg.train.learning_steps, 1.0)
             self.agent.tilt.temperature = self.agent.cfg.train.tilt_temperature_start + progress * (
                 self.agent.cfg.train.tilt_temperature_end - self.agent.cfg.train.tilt_temperature_start

@@ -50,6 +50,7 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_init_geom_ratio: float = 0.9
     tilt_ridge_alpha: float = 1e-3
     tilt_ridge_min: float = 1e-8
+    tilt_start_step: int = 0
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -175,33 +176,36 @@ class TDJEPAAgent:
     def act(self, obs: torch.Tensor, z: torch.Tensor, mean: bool = True) -> torch.Tensor:
         return self._model.act(obs, z, mean)
 
+    def _tilt_active(self, step: Optional[int]) -> bool:
+        if self.tilt is None:
+            return False
+        if step is None:
+            return True
+        return step >= self.cfg.train.tilt_start_step
+
     @torch.no_grad()
     def sample_mixed_z(
         self,
         train_goal: Optional[torch.Tensor] = None,
-        score_obs: Optional[torch.Tensor] = None,
+        step: Optional[int] = None,
         *args,
         **kwargs,
     ):
         # samples a batch from the z distribution used to update the networks
-        if self.tilt is None:
+        if not self._tilt_active(step):
             z = self._model.sample_z(self.cfg.train.batch_size, device=self.device)
         else:
             z = self.tilt.z
         if train_goal is not None:
             mask = torch.rand(self.cfg.train.batch_size, device=self.device) < self.cfg.train.train_goal_ratio
-            if self.tilt is None:
-                perm = torch.randperm(self.cfg.train.batch_size, device=self.device)
-                train_goal = train_goal[perm]
-                goals = self.project_train_goals(train_goal)
-                z = torch.where(mask.unsqueeze(-1), goals, z)
-            elif mask.any():
-                z = z.clone()
-                z[mask] = self.sample_tilted_goal_z(
-                    train_goal=train_goal,
-                    score_obs=score_obs if score_obs is not None else train_goal,
-                    size=int(mask.sum().item()),
-                )
+            # Goal-based mix is always a plain uniform draw of projected train
+            # goals: its job is to ground z on the empirical goal distribution, so
+            # it stays an un-tilted anchor. Leverage/coverage tilting lives only on
+            # the sphere prior pool (tilt.z), not here. torch.where returns a new
+            # tensor, so tilt.z is never mutated in the tilt-active case.
+            perm = torch.randperm(self.cfg.train.batch_size, device=self.device)
+            goals = self.project_train_goals(train_goal[perm])
+            z = torch.where(mask.unsqueeze(-1), goals, z)
         return z
 
     @torch.no_grad()
@@ -220,33 +224,6 @@ class TDJEPAAgent:
             )
             goals = torch.matmul(goals, inv_cov)
         return self._model.project_z(goals)
-
-    @torch.no_grad()
-    def sample_tilted_goal_z(
-        self,
-        train_goal: torch.Tensor,
-        score_obs: torch.Tensor,
-        size: int,
-    ) -> torch.Tensor:
-        candidate_size = self.cfg.train.tilt_candidate_multiplier * size
-        candidate_indices = torch.randint(
-            0, train_goal.shape[0], (candidate_size,), device=train_goal.device
-        )
-        goal_candidates = train_goal[candidate_indices]
-        score_candidates = score_obs[candidate_indices]
-        z_candidates = self.project_train_goals(goal_candidates)
-
-        candidate_score, _ = self.score_and_grad(
-            phi_obs=score_candidates,
-            z=z_candidates,
-            centering=False,
-        )
-        logits = candidate_score / self.tilt.temperature
-        logits = logits - logits.max()
-        prob = torch.softmax(logits, dim=0)
-        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
-
-        return z_candidates[selected_idx]
 
     @torch.no_grad()
     def augment_image(self, obs, next_obs):
@@ -288,7 +265,7 @@ class TDJEPAAgent:
         obs, next_obs = self.augment_image(obs, next_obs)
         phi_obs, phi_next_obs, psi_obs, psi_next_obs = self.encode_image(obs, next_obs)
 
-        if self.tilt is not None:
+        if self._tilt_active(step):
             if init_obs is None:
                 raise ValueError("TD-JEPA tilt requires init_obs during training.")
             if init_steps is None:
@@ -310,7 +287,7 @@ class TDJEPAAgent:
                     ),
                 )
 
-        z = self.sample_mixed_z(train_goal=psi_next_obs, score_obs=phi_next_obs).clone()
+        z = self.sample_mixed_z(train_goal=psi_next_obs, step=step).clone()
 
         metrics = self.update_tdjepa(
             phi_obs=phi_obs,
@@ -370,6 +347,15 @@ class TDJEPAAgent:
         else:
             v = target_phi_predictors
 
+        # Cap each candidate's feature norm at the p99 of this batch so a handful
+        # of oversized-norm candidates can't dominate the leverage score (and the
+        # Gram it feeds into); candidates below the cap are left untouched, only the
+        # top outliers are pulled down to it. Matches FB.score_and_features.
+        feature_norms = v.norm(dim=-1)
+        norm_hi = torch.quantile(feature_norms, 0.99)
+        clipped_norms = torch.clamp(feature_norms, max=norm_hi)
+        v = v * (clipped_norms / feature_norms).unsqueeze(-1)
+
         if centering:
             v_metric = v - self.tilt.running_mean.detach()
         else:
@@ -388,7 +374,9 @@ class TDJEPAAgent:
             identity = torch.eye(v_metric.shape[-1], device=v_metric.device, dtype=v_metric.dtype)
             ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
 
-        query = z if self.cfg.train.tilting_by_z else v_metric
+        # The Gram is built from features divided by tilt.feature_scale(), so the
+        # query must use the same scale to keep the leverage score consistent.
+        query = z if self.cfg.train.tilting_by_z else v_metric / self.tilt.feature_scale()
         qg = query @ ginv
         score = torch.sum(qg * query, dim=1)
         return score, v_metric
