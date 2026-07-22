@@ -43,6 +43,24 @@ class TiltLatentSelector:
         return (torch.sqrt(self.feat_ms) + 1e-8).to(self.z.dtype)
 
     @torch.no_grad()
+    def sample_init_features(
+        self,
+        init_features: torch.Tensor,
+        init_timesteps: torch.Tensor,
+        num_samples: int,
+    ) -> torch.Tensor:
+        """Sample initial-state features from the selector's geometric distribution."""
+        init_timesteps = init_timesteps.to(
+            device=init_features.device, dtype=init_features.dtype
+        )
+        init_weights = torch.pow(self.init_geom_ratio, init_timesteps)
+        init_weights = init_weights / init_weights.sum()
+        obs_idx = torch.multinomial(
+            init_weights, num_samples=num_samples, replacement=True
+        )
+        return init_features[obs_idx]
+
+    @torch.no_grad()
     def refresh(
         self,
         init_features: torch.Tensor,
@@ -54,16 +72,11 @@ class TiltLatentSelector:
         n_candidates = self.candidate_multiplier * n
         z_candidates = sample_z(n_candidates)
 
-        init_timesteps = init_timesteps.to(
-            device=init_features.device, dtype=init_features.dtype
+        feature_candidates = self.sample_init_features(
+            init_features=init_features,
+            init_timesteps=init_timesteps,
+            num_samples=n_candidates,
         )
-        init_weights = torch.pow(self.init_geom_ratio, init_timesteps)
-        init_weights = init_weights / init_weights.sum()
-
-        obs_idx = torch.multinomial(
-            init_weights, num_samples=n_candidates, replacement=True
-        )
-        feature_candidates = init_features[obs_idx]
 
         candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
 

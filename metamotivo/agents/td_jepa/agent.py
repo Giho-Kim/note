@@ -51,6 +51,7 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_ridge_alpha: float = 1e-3
     tilt_ridge_min: float = 1e-8
     tilt_start_step: int = 0
+    tilt_goal: bool = False
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -187,6 +188,8 @@ class TDJEPAAgent:
     def sample_mixed_z(
         self,
         train_goal: Optional[torch.Tensor] = None,
+        init_features: Optional[torch.Tensor] = None,
+        init_timesteps: Optional[torch.Tensor] = None,
         step: Optional[int] = None,
         *args,
         **kwargs,
@@ -198,15 +201,54 @@ class TDJEPAAgent:
             z = self.tilt.z
         if train_goal is not None:
             mask = torch.rand(self.cfg.train.batch_size, device=self.device) < self.cfg.train.train_goal_ratio
-            # Goal-based mix is always a plain uniform draw of projected train
-            # goals: its job is to ground z on the empirical goal distribution, so
-            # it stays an un-tilted anchor. Leverage/coverage tilting lives only on
-            # the sphere prior pool (tilt.z), not here. torch.where returns a new
-            # tensor, so tilt.z is never mutated in the tilt-active case.
-            perm = torch.randperm(self.cfg.train.batch_size, device=self.device)
-            goals = self.project_train_goals(train_goal[perm])
-            z = torch.where(mask.unsqueeze(-1), goals, z)
+            if mask.any() and self._tilt_active(step) and self.cfg.train.tilt_goal:
+                if init_features is None or init_timesteps is None:
+                    raise ValueError(
+                        "tilt_goal requires initial-state features and timesteps."
+                    )
+                z = z.clone()
+                z[mask] = self.sample_tilted_goal_z(
+                    train_goal=train_goal,
+                    init_features=init_features,
+                    init_timesteps=init_timesteps,
+                    size=int(mask.sum().item()),
+                )
+            else:
+                # torch.where returns a new tensor, so tilt.z is never mutated.
+                perm = torch.randperm(self.cfg.train.batch_size, device=self.device)
+                goals = self.project_train_goals(train_goal[perm])
+                z = torch.where(mask.unsqueeze(-1), goals, z)
         return z
+
+    @torch.no_grad()
+    def sample_tilted_goal_z(
+        self,
+        train_goal: torch.Tensor,
+        init_features: torch.Tensor,
+        init_timesteps: torch.Tensor,
+        size: int,
+    ) -> torch.Tensor:
+        """Tilt goal latents using independent geometrically sampled initial states."""
+        candidate_size = self.cfg.train.tilt_candidate_multiplier * size
+        goal_idx = torch.randint(
+            0, train_goal.shape[0], (candidate_size,), device=train_goal.device
+        )
+        z_candidates = self.project_train_goals(train_goal[goal_idx])
+        score_features = self.tilt.sample_init_features(
+            init_features=init_features,
+            init_timesteps=init_timesteps,
+            num_samples=candidate_size,
+        )
+        candidate_score, _ = self.score_and_grad(
+            phi_obs=score_features,
+            z=z_candidates,
+            centering=False,
+        )
+        logits = candidate_score / self.tilt.temperature
+        logits = logits - logits.max()
+        prob = torch.softmax(logits, dim=0)
+        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
+        return z_candidates[selected_idx]
 
     @torch.no_grad()
     def project_train_goals(self, train_goal: torch.Tensor) -> torch.Tensor:
@@ -265,6 +307,8 @@ class TDJEPAAgent:
         obs, next_obs = self.augment_image(obs, next_obs)
         phi_obs, phi_next_obs, psi_obs, psi_next_obs = self.encode_image(obs, next_obs)
 
+        phi_init_obs = None
+        tilt_init_steps = None
         if self._tilt_active(step):
             if init_obs is None:
                 raise ValueError("TD-JEPA tilt requires init_obs during training.")
@@ -272,13 +316,13 @@ class TDJEPAAgent:
                 raise ValueError("TD-JEPA tilt requires init_steps during training.")
             with torch.no_grad(), eval_mode(self._model._obs_normalizer):
                 init_obs = torch.as_tensor(init_obs, dtype=torch.float32, device=self.device)
-                init_steps = torch.as_tensor(init_steps, dtype=torch.long, device=self.device)
+                tilt_init_steps = torch.as_tensor(init_steps, dtype=torch.long, device=self.device)
                 init_obs = self._model._obs_normalizer(init_obs)
                 init_obs = self._model._augmentator(init_obs)
                 phi_init_obs = self._model._phi_rgb_encoder(init_obs)
                 self.tilt.refresh(
                     init_features=phi_init_obs,
-                    init_timesteps=init_steps,
+                    init_timesteps=tilt_init_steps,
                     sample_z=lambda size: self._model.sample_z(size, device=self.device),
                     score_fn=lambda obs_features, z_candidates: self.score_and_grad(
                         phi_obs=obs_features,
@@ -287,7 +331,12 @@ class TDJEPAAgent:
                     ),
                 )
 
-        z = self.sample_mixed_z(train_goal=psi_next_obs, step=step).clone()
+        z = self.sample_mixed_z(
+            train_goal=psi_next_obs,
+            init_features=phi_init_obs,
+            init_timesteps=tilt_init_steps,
+            step=step,
+        ).clone()
 
         metrics = self.update_tdjepa(
             phi_obs=phi_obs,

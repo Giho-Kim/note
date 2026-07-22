@@ -29,6 +29,7 @@ parser.add_argument("algorithm", type=str)
 parser.add_argument("domain_name", type=str)
 parser.add_argument("exploration_algorithm", type=str)
 parser.add_argument("--tilt", action="store_true")
+parser.add_argument("--tilt_goal", action="store_true")
 parser.add_argument("--tilting_by_z", action="store_true")
 parser.add_argument("--tilt_beta", type=float)
 parser.add_argument("--tilt_temperature", type=float)
@@ -95,6 +96,11 @@ working_dir = Path.cwd()
 if args.tilt:
     if args.algorithm not in {"td_jepa", "fb", "vcfb", "mcfb"}:
         raise ValueError(f"--tilt is not supported for algorithm '{args.algorithm}'.")
+if args.tilt_goal:
+    if not args.tilt:
+        raise ValueError("--tilt_goal requires --tilt.")
+    if args.algorithm not in {"td_jepa", "fb"}:
+        raise ValueError("--tilt_goal is only supported for td_jepa and fb.")
 
 if args.algorithm in ("vcfb", "mcfb"):
     algo_dir = "calfb" if "cal" in args.algorithm else "cfb"
@@ -347,6 +353,7 @@ elif config["algorithm"] == "td_jepa":
         tilt_ridge_alpha=config["tilt_ridge_alpha"],
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
+        tilt_goal=config["tilt_goal"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -437,6 +444,7 @@ elif config["algorithm"] == "fb":
         tilt_ridge_alpha=config["tilt_ridge_alpha"],
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
+        tilt_goal=config["tilt_goal"],
         device=config["device"],
         name=config["name"],
     )

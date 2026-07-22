@@ -63,6 +63,7 @@ class FB(AbstractAgent):
         tilt_ridge_min: float,
         device: torch.device,
         name: str,
+        tilt_goal: bool = False,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -145,6 +146,7 @@ class FB(AbstractAgent):
         self._tilt_ridge_alpha = tilt_ridge_alpha
         self._tilt_ridge_min = tilt_ridge_min
         self._tilt_start_step = tilt_start_step
+        self._tilt_goal = tilt_goal
         self.std_dev_schedule = std_dev_schedule
         self.tilt = None
         if tilt:
@@ -220,7 +222,12 @@ class FB(AbstractAgent):
                     step=step,
                 ),
             )
-        zs = self.sample_mixed_z(train_goal=backward_input, step=step)
+        zs = self.sample_mixed_z(
+            train_goal=backward_input,
+            init_observations=batch.observations,
+            init_timesteps=batch.timesteps,
+            step=step,
+        )
         actor_zs = zs.clone().requires_grad_(True)
         actor_observations = batch.observations.clone().requires_grad_(True)
 
@@ -263,7 +270,11 @@ class FB(AbstractAgent):
 
     @torch.no_grad()
     def sample_mixed_z(
-        self, train_goal: Optional[torch.Tensor] = None, step: Optional[int] = None
+        self,
+        train_goal: Optional[torch.Tensor] = None,
+        init_observations: Optional[torch.Tensor] = None,
+        init_timesteps: Optional[torch.Tensor] = None,
+        step: Optional[int] = None,
     ) -> torch.Tensor:
         if not self._tilt_active(step):
             zs = self.sample_z(size=self.batch_size)
@@ -273,19 +284,64 @@ class FB(AbstractAgent):
         if train_goal is not None:
             mix_indices = np.where(np.random.rand(self.batch_size) < self._z_mix_ratio)[0]
             if len(mix_indices) > 0:
-                # Goal-based mix is always a plain uniform draw of B(goal): its job
-                # is to ground z on the empirical goal distribution, so it stays an
-                # un-tilted anchor. Leverage/coverage tilting lives only on the
-                # sphere prior pool (tilt.z), not here.
-                mix_zs = self.FB.backward_representation(
-                    train_goal[mix_indices]
-                ).detach()
-                mix_zs = math.sqrt(
-                    self._z_dimension
-                ) * torch.nn.functional.normalize(mix_zs, dim=1)
+                if self._tilt_active(step) and self._tilt_goal:
+                    if init_observations is None or init_timesteps is None:
+                        raise ValueError(
+                            "tilt_goal requires initial observations and timesteps."
+                        )
+                    mix_zs = self.sample_tilted_goal_z(
+                        train_goal=train_goal,
+                        init_observations=init_observations,
+                        init_timesteps=init_timesteps,
+                        size=len(mix_indices),
+                        step=step,
+                    )
+                else:
+                    mix_zs = self.FB.backward_representation(
+                        train_goal[mix_indices]
+                    ).detach()
+                    mix_zs = math.sqrt(
+                        self._z_dimension
+                    ) * torch.nn.functional.normalize(mix_zs, dim=1)
                 zs[mix_indices] = mix_zs
 
         return zs
+
+    @torch.no_grad()
+    def sample_tilted_goal_z(
+        self,
+        train_goal: torch.Tensor,
+        init_observations: torch.Tensor,
+        init_timesteps: torch.Tensor,
+        size: int,
+        step: int,
+    ) -> torch.Tensor:
+        """Tilt goal latents using independently sampled initial-state observations."""
+        candidate_size = self.tilt.candidate_multiplier * size
+        goal_idx = torch.randint(
+            0, train_goal.shape[0], (candidate_size,), device=train_goal.device
+        )
+        goal_candidates = train_goal[goal_idx]
+        z_candidates = self.FB.backward_representation(goal_candidates).detach()
+        z_candidates = math.sqrt(self._z_dimension) * torch.nn.functional.normalize(
+            z_candidates, dim=1
+        )
+
+        score_observations = self.tilt.sample_init_features(
+            init_features=init_observations,
+            init_timesteps=init_timesteps,
+            num_samples=candidate_size,
+        )
+        candidate_score, _ = self.score_and_features(
+            observations=score_observations,
+            z=z_candidates,
+            step=step,
+        )
+        logits = candidate_score / self.tilt.temperature
+        logits = logits - logits.max()
+        prob = torch.softmax(logits, dim=0)
+        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
+        return z_candidates[selected_idx]
 
     @torch.no_grad()
     def score_and_features(
