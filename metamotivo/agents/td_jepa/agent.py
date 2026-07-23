@@ -191,44 +191,71 @@ class TDJEPAAgent:
         init_features: Optional[torch.Tensor] = None,
         init_timesteps: Optional[torch.Tensor] = None,
         step: Optional[int] = None,
+        return_goal_features: bool = False,
+        goal_mask: Optional[torch.Tensor] = None,
         *args,
         **kwargs,
     ):
         # samples a batch from the z distribution used to update the networks
+        if goal_mask is None:
+            goal_mask = (
+                torch.rand(self.cfg.train.batch_size, device=self.device)
+                < self.cfg.train.train_goal_ratio
+            )
+        sphere_mask = ~goal_mask
+        sphere_count = int(sphere_mask.sum().item())
         if not self._tilt_active(step):
             z = self._model.sample_z(self.cfg.train.batch_size, device=self.device)
         else:
-            z = self.tilt.z
+            if sphere_count > 0 and self.tilt.z.shape[0] != sphere_count:
+                raise ValueError(
+                    "Sphere tilt pool size does not match the non-goal batch size."
+                )
+            z = torch.empty(
+                (self.cfg.train.batch_size, self.tilt.z.shape[-1]),
+                device=self.tilt.z.device,
+                dtype=self.tilt.z.dtype,
+            )
+            if sphere_count > 0:
+                z[sphere_mask] = self.tilt.z
+        goal_features = None
+        goal_fraction = float(goal_mask.float().mean())
         if train_goal is not None:
-            mask = torch.rand(self.cfg.train.batch_size, device=self.device) < self.cfg.train.train_goal_ratio
-            if mask.any() and self._tilt_active(step) and self.cfg.train.tilt_goal:
+            if goal_mask.any() and self._tilt_active(step):
                 if init_features is None or init_timesteps is None:
                     raise ValueError(
-                        "tilt_goal requires initial-state features and timesteps."
+                        "Goal Gram update requires initial-state features and timesteps."
                     )
                 z = z.clone()
-                z[mask] = self.sample_tilted_goal_z(
+                selected_z, goal_features = self.sample_goal_z_candidates(
                     train_goal=train_goal,
                     init_features=init_features,
                     init_timesteps=init_timesteps,
-                    size=int(mask.sum().item()),
+                    size=int(goal_mask.sum().item()),
+                    tilt_selection=self.cfg.train.tilt_goal,
+                    return_features=True,
                 )
+                z[goal_mask] = selected_z
             else:
                 # torch.where returns a new tensor, so tilt.z is never mutated.
                 perm = torch.randperm(self.cfg.train.batch_size, device=self.device)
                 goals = self.project_train_goals(train_goal[perm])
-                z = torch.where(mask.unsqueeze(-1), goals, z)
+                z = torch.where(goal_mask.unsqueeze(-1), goals, z)
+        if return_goal_features:
+            return z, goal_features, goal_fraction
         return z
 
     @torch.no_grad()
-    def sample_tilted_goal_z(
+    def sample_goal_z_candidates(
         self,
         train_goal: torch.Tensor,
         init_features: torch.Tensor,
         init_timesteps: torch.Tensor,
         size: int,
-    ) -> torch.Tensor:
-        """Tilt goal latents using independent geometrically sampled initial states."""
+        tilt_selection: bool,
+        return_features: bool = False,
+    ):
+        """Build a goal candidate pool and optionally select from it by tilt score."""
         candidate_size = self.cfg.train.tilt_candidate_multiplier * size
         goal_idx = torch.randint(
             0, train_goal.shape[0], (candidate_size,), device=train_goal.device
@@ -239,16 +266,26 @@ class TDJEPAAgent:
             init_timesteps=init_timesteps,
             num_samples=candidate_size,
         )
-        candidate_score, _ = self.score_and_grad(
+        candidate_score, goal_features = self.score_and_grad(
             phi_obs=score_features,
             z=z_candidates,
             centering=False,
         )
-        logits = candidate_score / self.tilt.temperature
-        logits = logits - logits.max()
-        prob = torch.softmax(logits, dim=0)
-        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
-        return z_candidates[selected_idx]
+        if tilt_selection:
+            logits = candidate_score / self.tilt.temperature
+            logits = logits - logits.max()
+            prob = torch.softmax(logits, dim=0)
+            selected_idx = torch.multinomial(
+                prob, num_samples=size, replacement=False
+            )
+        else:
+            selected_idx = torch.randperm(candidate_size, device=train_goal.device)[
+                :size
+            ]
+        selected_z = z_candidates[selected_idx]
+        if return_features:
+            return selected_z, goal_features
+        return selected_z
 
     @torch.no_grad()
     def project_train_goals(self, train_goal: torch.Tensor) -> torch.Tensor:
@@ -309,7 +346,13 @@ class TDJEPAAgent:
 
         phi_init_obs = None
         tilt_init_steps = None
-        if self._tilt_active(step):
+        sphere_features = None
+        goal_mask = (
+            torch.rand(self.cfg.train.batch_size, device=self.device)
+            < self.cfg.train.train_goal_ratio
+        )
+        sphere_count = int((~goal_mask).sum().item())
+        if self._tilt_active(step) and sphere_count > 0:
             if init_obs is None:
                 raise ValueError("TD-JEPA tilt requires init_obs during training.")
             if init_steps is None:
@@ -320,7 +363,7 @@ class TDJEPAAgent:
                 init_obs = self._model._obs_normalizer(init_obs)
                 init_obs = self._model._augmentator(init_obs)
                 phi_init_obs = self._model._phi_rgb_encoder(init_obs)
-                self.tilt.refresh(
+                _, sphere_features = self.tilt.refresh(
                     init_features=phi_init_obs,
                     init_timesteps=tilt_init_steps,
                     sample_z=lambda size: self._model.sample_z(size, device=self.device),
@@ -329,14 +372,40 @@ class TDJEPAAgent:
                         z=z_candidates,
                         centering=False,
                     ),
+                    update_gram=False,
+                    return_features=True,
+                    num_samples=sphere_count,
                 )
+        elif self._tilt_active(step):
+            if init_obs is None:
+                raise ValueError("TD-JEPA tilt requires init_obs during training.")
+            if init_steps is None:
+                raise ValueError("TD-JEPA tilt requires init_steps during training.")
+            with torch.no_grad(), eval_mode(self._model._obs_normalizer):
+                init_obs = torch.as_tensor(
+                    init_obs, dtype=torch.float32, device=self.device
+                )
+                tilt_init_steps = torch.as_tensor(
+                    init_steps, dtype=torch.long, device=self.device
+                )
+                init_obs = self._model._obs_normalizer(init_obs)
+                init_obs = self._model._augmentator(init_obs)
+                phi_init_obs = self._model._phi_rgb_encoder(init_obs)
 
-        z = self.sample_mixed_z(
+        z, goal_features, goal_fraction = self.sample_mixed_z(
             train_goal=psi_next_obs,
             init_features=phi_init_obs,
             init_timesteps=tilt_init_steps,
             step=step,
-        ).clone()
+            return_goal_features=True,
+            goal_mask=goal_mask,
+        )
+        if sphere_features is not None:
+            gram_batches = [(sphere_features, 1.0 - goal_fraction)]
+            if goal_features is not None:
+                gram_batches.append((goal_features, goal_fraction))
+            self.tilt.update_gram(gram_batches)
+        z = z.clone()
 
         metrics = self.update_tdjepa(
             phi_obs=phi_obs,

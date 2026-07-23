@@ -1,6 +1,3 @@
-export WANDB_PROJECT=jepa100k
-python main_exorl.py td_jepa walker rnd  --eval_tasks stand walk run flip --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 2 --tilt_init_geom_ratio 0.99 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 44
-python main_exorl.py  td_jepa quadruped rnd  --eval_tasks stand jump roll roll_fast escape  --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 2 --tilt_init_geom_ratio 0.99 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 44
-python main_exorl.py  td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 2 --tilt_init_geom_ratio 0.99 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 44
-python main_exorl.py  td_jepa point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right    --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 2 --tilt_init_geom_ratio 0.99 --tilt_temperature_start 30 --tilt_temperature_end 30 --tilt_ridge_alpha 1e-2 --seed 44
-
+export WANDB_PROJECT=mcfb
+python main_exorl.py mcfb jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --z_mix_ratio 0.5 --seed 44
+python main_exorl.py mcfb point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --z_mix_ratio 0.5 --seed 44

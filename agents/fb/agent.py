@@ -210,9 +210,15 @@ class FB(AbstractAgent):
 
         perm = torch.randperm(self.batch_size)
         backward_input = batch.observations[perm]
+        mix_indices = np.where(
+            np.random.rand(self.batch_size) < self._z_mix_ratio
+        )[0]
+        sphere_count = self.batch_size - len(mix_indices)
+        sphere_features = None
         if self.tilt is not None and step >= self._tilt_start_step:
             self.tilt.temperature = self._tilt_temperature(step)
-            self.tilt.refresh(
+        if self._tilt_active(step) and sphere_count > 0:
+            _, sphere_features = self.tilt.refresh(
                 init_features=batch.observations,
                 init_timesteps=batch.timesteps,
                 sample_z=lambda size: self.sample_z(size=size),
@@ -221,13 +227,23 @@ class FB(AbstractAgent):
                     z=z_candidates,
                     step=step,
                 ),
+                update_gram=False,
+                return_features=True,
+                num_samples=sphere_count,
             )
-        zs = self.sample_mixed_z(
+        zs, goal_features, goal_fraction = self.sample_mixed_z(
             train_goal=backward_input,
             init_observations=batch.observations,
             init_timesteps=batch.timesteps,
             step=step,
+            return_goal_features=True,
+            mix_indices=mix_indices,
         )
+        if sphere_features is not None:
+            gram_batches = [(sphere_features, 1.0 - goal_fraction)]
+            if goal_features is not None:
+                gram_batches.append((goal_features, goal_fraction))
+            self.tilt.update_gram(gram_batches)
         actor_zs = zs.clone().requires_grad_(True)
         actor_observations = batch.observations.clone().requires_grad_(True)
 
@@ -275,26 +291,52 @@ class FB(AbstractAgent):
         init_observations: Optional[torch.Tensor] = None,
         init_timesteps: Optional[torch.Tensor] = None,
         step: Optional[int] = None,
-    ) -> torch.Tensor:
+        return_goal_features: bool = False,
+        mix_indices: Optional[np.ndarray] = None,
+    ):
+        if mix_indices is None:
+            mix_indices = np.where(
+                np.random.rand(self.batch_size) < self._z_mix_ratio
+            )[0]
+        sphere_mask = np.ones(self.batch_size, dtype=bool)
+        sphere_mask[mix_indices] = False
+        sphere_indices = np.flatnonzero(sphere_mask)
+
         if not self._tilt_active(step):
             zs = self.sample_z(size=self.batch_size)
         else:
-            zs = self.tilt.z.clone()
+            if (
+                len(sphere_indices) > 0
+                and self.tilt.z.shape[0] != len(sphere_indices)
+            ):
+                raise ValueError(
+                    "Sphere tilt pool size does not match the non-goal batch size."
+                )
+            zs = torch.empty(
+                (self.batch_size, self.tilt.z.shape[-1]),
+                device=self.tilt.z.device,
+                dtype=self.tilt.z.dtype,
+            )
+            if len(sphere_indices) > 0:
+                zs[sphere_indices] = self.tilt.z
 
+        goal_features = None
+        goal_fraction = len(mix_indices) / self.batch_size
         if train_goal is not None:
-            mix_indices = np.where(np.random.rand(self.batch_size) < self._z_mix_ratio)[0]
             if len(mix_indices) > 0:
-                if self._tilt_active(step) and self._tilt_goal:
+                if self._tilt_active(step):
                     if init_observations is None or init_timesteps is None:
                         raise ValueError(
-                            "tilt_goal requires initial observations and timesteps."
+                            "Goal Gram update requires initial observations and timesteps."
                         )
-                    mix_zs = self.sample_tilted_goal_z(
+                    mix_zs, goal_features = self.sample_goal_z_candidates(
                         train_goal=train_goal,
                         init_observations=init_observations,
                         init_timesteps=init_timesteps,
                         size=len(mix_indices),
                         step=step,
+                        tilt_selection=self._tilt_goal,
+                        return_features=True,
                     )
                 else:
                     mix_zs = self.FB.backward_representation(
@@ -305,18 +347,22 @@ class FB(AbstractAgent):
                     ) * torch.nn.functional.normalize(mix_zs, dim=1)
                 zs[mix_indices] = mix_zs
 
+        if return_goal_features:
+            return zs, goal_features, goal_fraction
         return zs
 
     @torch.no_grad()
-    def sample_tilted_goal_z(
+    def sample_goal_z_candidates(
         self,
         train_goal: torch.Tensor,
         init_observations: torch.Tensor,
         init_timesteps: torch.Tensor,
         size: int,
         step: int,
-    ) -> torch.Tensor:
-        """Tilt goal latents using independently sampled initial-state observations."""
+        tilt_selection: bool,
+        return_features: bool = False,
+    ):
+        """Build a goal candidate pool and optionally select from it by tilt score."""
         candidate_size = self.tilt.candidate_multiplier * size
         goal_idx = torch.randint(
             0, train_goal.shape[0], (candidate_size,), device=train_goal.device
@@ -332,16 +378,26 @@ class FB(AbstractAgent):
             init_timesteps=init_timesteps,
             num_samples=candidate_size,
         )
-        candidate_score, _ = self.score_and_features(
+        candidate_score, goal_features = self.score_and_features(
             observations=score_observations,
             z=z_candidates,
             step=step,
         )
-        logits = candidate_score / self.tilt.temperature
-        logits = logits - logits.max()
-        prob = torch.softmax(logits, dim=0)
-        selected_idx = torch.multinomial(prob, num_samples=size, replacement=False)
-        return z_candidates[selected_idx]
+        if tilt_selection:
+            logits = candidate_score / self.tilt.temperature
+            logits = logits - logits.max()
+            prob = torch.softmax(logits, dim=0)
+            selected_idx = torch.multinomial(
+                prob, num_samples=size, replacement=False
+            )
+        else:
+            selected_idx = torch.randperm(candidate_size, device=train_goal.device)[
+                :size
+            ]
+        selected_z = z_candidates[selected_idx]
+        if return_features:
+            return selected_z, goal_features
+        return selected_z
 
     @torch.no_grad()
     def score_and_features(
