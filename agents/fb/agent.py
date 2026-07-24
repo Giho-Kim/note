@@ -415,15 +415,6 @@ class FB(AbstractAgent):
         )
         features = 0.5 * (target_f1 + target_f2)
 
-        # Cap each candidate's feature norm at the p99 of this batch so a
-        # handful of oversized-norm candidates can't dominate the leverage
-        # score (and the Gram it feeds into); candidates below the cap are
-        # left untouched, only the top outliers are pulled down to it.
-        feature_norms = features.norm(dim=-1)
-        norm_hi = torch.quantile(feature_norms, 0.99)
-        clipped_norms = torch.clamp(feature_norms, max=norm_hi)
-        features = features * (clipped_norms / feature_norms).unsqueeze(-1)
-
         trace_g = torch.trace(self.tilt.gram)
         alpha_lam = self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0]
         lam = max(alpha_lam, self._tilt_ridge_min)

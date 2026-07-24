@@ -465,15 +465,6 @@ class TDJEPAAgent:
         else:
             v = target_phi_predictors
 
-        # Cap each candidate's feature norm at the p99 of this batch so a handful
-        # of oversized-norm candidates can't dominate the leverage score (and the
-        # Gram it feeds into); candidates below the cap are left untouched, only the
-        # top outliers are pulled down to it. Matches FB.score_and_features.
-        feature_norms = v.norm(dim=-1)
-        norm_hi = torch.quantile(feature_norms, 0.99)
-        clipped_norms = torch.clamp(feature_norms, max=norm_hi)
-        v = v * (clipped_norms / feature_norms).unsqueeze(-1)
-
         if centering:
             v_metric = v - self.tilt.running_mean.detach()
         else:

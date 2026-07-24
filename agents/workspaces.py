@@ -59,7 +59,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
     Trains/evals/rollouts an offline RL agent given
     """
     COLLECTION_TILT_TEMPERATURE = 5.0
-    TILT_VERBOSE_INTERVAL = 2000
+    TILT_VERBOSE_INTERVAL = 20000
+    SAVE_EVERY_INTERVAL = 100000
 
     def __init__(
         self,
@@ -177,7 +178,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     wandb_run=run,
                 )
 
-                if self.save_every:
+                if self.save_every and i % self.SAVE_EVERY_INTERVAL == 0:
                     checkpoint_dir = model_path / "checkpoints"
                     agent._name = i  # pylint: disable=protected-access
                     checkpoint_path = agent.save(checkpoint_dir)
@@ -550,9 +551,17 @@ class OfflineRLWorkspace(AbstractWorkspace):
         """Prints internal tilt diagnostics so `--verbose` runs can confirm the
         latent selector is healthy (well-conditioned Gram, stable feature scale,
         diverse z pool). Only meaningful once tilting is active."""
-        if not isinstance(agent, FB) or agent.tilt is None:
+        if not isinstance(agent, (FB, TDJEPA)) or agent.tilt is None:
             return
-        if step < agent._tilt_start_step:  # pylint: disable=protected-access
+        if isinstance(agent, FB):
+            tilt_start_step = agent._tilt_start_step  # noqa: SLF001  pylint: disable=protected-access
+            tilt_ridge_alpha = agent._tilt_ridge_alpha  # noqa: SLF001  pylint: disable=protected-access
+            tilt_ridge_min = agent._tilt_ridge_min  # noqa: SLF001  pylint: disable=protected-access
+        else:
+            tilt_start_step = agent.cfg.train.tilt_start_step
+            tilt_ridge_alpha = agent.cfg.train.tilt_ridge_alpha
+            tilt_ridge_min = agent.cfg.train.tilt_ridge_min
+        if step < tilt_start_step:
             return
 
         tilt = agent.tilt
@@ -568,9 +577,9 @@ class OfflineRLWorkspace(AbstractWorkspace):
         except Exception:  # pylint: disable=broad-except
             eig_min = eig_max = cond = float("nan")
         trace_g = float(torch.trace(gram))
-        alpha_lam = agent._tilt_ridge_alpha * trace_g / dim  # noqa: SLF001
-        lam = max(alpha_lam, agent._tilt_ridge_min)  # noqa: SLF001
-        ridge_clamped = alpha_lam < agent._tilt_ridge_min  # noqa: SLF001
+        alpha_lam = tilt_ridge_alpha * trace_g / dim
+        lam = max(alpha_lam, tilt_ridge_min)
+        ridge_clamped = alpha_lam < tilt_ridge_min
 
         # --- feature scale (RMS EMA that keeps the Gram from overflowing) ---
         feat_scale = float(tilt.feature_scale())
