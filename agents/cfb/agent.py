@@ -1,7 +1,7 @@
 """Module for specifiying the Conservative Forward-Backward Agent."""
 
 import torch
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from agents.fb.agent import FB
 
@@ -59,7 +59,7 @@ class CFB(FB):
         tilt_temperature_start: float = 20.0,
         tilt_temperature_end: float = 1.0,
         tilt_candidate_multiplier: int = 4,
-        tilt_init_geom_ratio: float = 0.9,
+        tilt_init_geom_ratio: Optional[float] = None,
         tilt_ridge_alpha: float = 0.1,
         tilt_ridge_min: float = 1e-8,
     ):

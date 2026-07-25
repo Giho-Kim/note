@@ -1,3 +1,5 @@
-export WANDB_PROJECT=mcfb
-python main_exorl.py mcfb jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --z_mix_ratio 0.5 --seed 44
-python main_exorl.py mcfb point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --z_mix_ratio 0.5 --seed 44
+export WANDB_PROJECT=hyperparameter
+python main_exorl.py fb walker rnd --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 8 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2 --tilt_beta 0.99 --seed 42 --verbose --tilt_goal
+python main_exorl.py fb walker rnd --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 8 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2 --tilt_beta 0.99 --seed 43 --verbose --tilt_goal
+python main_exorl.py fb walker rnd --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 8 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2 --tilt_beta 0.99 --seed 44 --verbose --tilt_goal
+python main_exorl.py fb walker rnd --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 1000 --tilt_candidate_multiplier 8 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2 --tilt_beta 0.99 --seed 45 --verbose --tilt_goal

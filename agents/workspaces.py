@@ -22,6 +22,8 @@ from scipy import stats
 from rewards import RewardFunctionConstructor
 from custom_dmc_tasks.point_mass_maze import GOALS as point_mass_maze_goals
 
+from metamotivo.agents.tilt import sample_init_indices
+
 from agents.base import AbstractWorkspace
 from agents.fb.agent import FB
 from agents.fb.replay_buffer import FBReplayBuffer, OnlineFBReplayBuffer
@@ -501,11 +503,9 @@ class OfflineRLWorkspace(AbstractWorkspace):
         ):
             return {}
 
-        init_timesteps = timesteps.to(device=observations.device, dtype=observations.dtype)
-        init_weights = torch.pow(agent.tilt.init_geom_ratio, init_timesteps)
-        init_weights = init_weights / init_weights.sum()
-        obs_idx = torch.multinomial(
-            init_weights, num_samples=observations.shape[0], replacement=True
+        init_timesteps = timesteps.to(device=observations.device)
+        obs_idx = sample_init_indices(
+            agent.tilt.init_geom_ratio, init_timesteps, observations.shape[0]
         )
         observations = observations[obs_idx]
 

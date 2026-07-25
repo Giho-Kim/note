@@ -161,7 +161,7 @@ elif tilt_temperature_override is not None:
     config["tilt_temperature"] = tilt_temperature_override
 
 if "tilt_init_geom_ratio" not in config:
-    config["tilt_init_geom_ratio"] = 0.9
+    config["tilt_init_geom_ratio"] = None
 if "tilt_ridge_alpha" not in config:
     config["tilt_ridge_alpha"] = 1e-3 if config["algorithm"] == "td_jepa" else 1e-1
 if "tilt_ridge_min" not in config:

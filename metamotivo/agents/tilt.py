@@ -13,6 +13,26 @@ ScoreFn = Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tenso
 SampleZFn = Callable[[int], torch.Tensor]
 
 
+def sample_init_indices(
+    init_geom_ratio: Optional[float],
+    init_timesteps: torch.Tensor,
+    num_samples: int,
+) -> torch.Tensor:
+    """Indices into init_timesteps to sample num_samples initial states from.
+
+    init_geom_ratio=None (the default) samples uniformly at random -- no bias
+    toward early-episode states. Passing a ratio in (0, 1) instead reweights
+    samples by ratio**timestep (only set this explicitly if you want that
+    early-episode bias)."""
+    if init_geom_ratio is None:
+        return torch.randint(
+            0, init_timesteps.shape[0], (num_samples,), device=init_timesteps.device
+        )
+    init_weights = torch.pow(init_geom_ratio, init_timesteps.to(torch.float32))
+    init_weights = init_weights / init_weights.sum()
+    return torch.multinomial(init_weights, num_samples=num_samples, replacement=True)
+
+
 @dataclass
 class TiltLatentSelector:
     """Maintains and refreshes a latent pool using a task-coverage score."""
@@ -21,7 +41,7 @@ class TiltLatentSelector:
     beta: float = 0.995
     temperature: float = 20.0
     candidate_multiplier: int = 10
-    init_geom_ratio: float = 0.9
+    init_geom_ratio: Optional[float] = None
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -49,15 +69,9 @@ class TiltLatentSelector:
         init_timesteps: torch.Tensor,
         num_samples: int,
     ) -> torch.Tensor:
-        """Sample initial-state features from the selector's geometric distribution."""
-        init_timesteps = init_timesteps.to(
-            device=init_features.device, dtype=init_features.dtype
-        )
-        init_weights = torch.pow(self.init_geom_ratio, init_timesteps)
-        init_weights = init_weights / init_weights.sum()
-        obs_idx = torch.multinomial(
-            init_weights, num_samples=num_samples, replacement=True
-        )
+        """Sample initial-state features (uniform unless init_geom_ratio is set)."""
+        init_timesteps = init_timesteps.to(device=init_features.device)
+        obs_idx = sample_init_indices(self.init_geom_ratio, init_timesteps, num_samples)
         return init_features[obs_idx]
 
     @torch.no_grad()

@@ -58,7 +58,7 @@ class FB(AbstractAgent):
         tilt_temperature_start: float,
         tilt_temperature_end: float,
         tilt_candidate_multiplier: int,
-        tilt_init_geom_ratio: float,
+        tilt_init_geom_ratio: Optional[float],
         tilt_ridge_alpha: float,
         tilt_ridge_min: float,
         device: torch.device,

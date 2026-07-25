@@ -47,7 +47,7 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_temperature_start: float = 20.0
     tilt_temperature_end: float = 1.0
     tilt_candidate_multiplier: int = 2
-    tilt_init_geom_ratio: float = 0.9
+    tilt_init_geom_ratio: Optional[float] = None
     tilt_ridge_alpha: float = 1e-3
     tilt_ridge_min: float = 1e-8
     tilt_start_step: int = 0
