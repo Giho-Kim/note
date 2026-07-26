@@ -1,6 +1,7 @@
 """Reusable latent selection utilities for tilt-style agents."""
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, Tuple
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 ScoreFn = Callable[[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor]]
+ScoreFromFeaturesFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 SampleZFn = Callable[[int], torch.Tensor]
 
 
@@ -42,6 +44,7 @@ class TiltLatentSelector:
     temperature: float = 20.0
     candidate_multiplier: int = 10
     init_geom_ratio: Optional[float] = None
+    states_per_candidate: int = 2
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -53,7 +56,12 @@ class TiltLatentSelector:
         # preserved because every feature is divided by the *same* scalar.
         # float64 so squaring a finite-but-huge feature (which would overflow
         # float32 at ~3.4e38) does not turn the scale into inf.
+        # Starts at an arbitrary 1.0 since no data has been seen yet at
+        # construction time; update_gram seeds it from the first real batch's
+        # own scale instead of EMA-blending into it (see _feat_ms_seeded),
+        # so there's no multi-hundred-step warmup where this is badly wrong.
         self.feat_ms = torch.ones((), device=self.z.device, dtype=torch.float64)
+        self._feat_ms_seeded = False
         self._refresh_count = 0
         self.last_prob_min = float("nan")
         self.last_prob_max = float("nan")
@@ -61,6 +69,23 @@ class TiltLatentSelector:
     def feature_scale(self) -> torch.Tensor:
         """Global scale (RMS) applied to forward features before the Gram."""
         return (torch.sqrt(self.feat_ms) + 1e-8).to(self.z.dtype)
+
+    def normalized_features(self, features: torch.Tensor) -> torch.Tensor:
+        """Divide by feature_scale() (the drifting global RMS) then tanh-compress
+        each row's own norm around sqrt(D) -- the expected norm of a "typical"
+        row once feature_scale() has made every dimension ~unit variance. Needs
+        no new tunable threshold: sqrt(D) falls straight out of feature_scale()'s
+        own definition. Unlike feature_scale() alone (a single scalar shared by
+        every row, which provably cannot change the Gram's eigenvalue ratios --
+        uniform rescaling preserves conditioning exactly), this compresses each
+        row by its OWN amount, so genuine outlier candidates get pulled toward
+        the pack instead of dominating the Gram, while typical-magnitude rows
+        pass through nearly unchanged (tanh is ~linear near 0)."""
+        scaled = features / self.feature_scale()
+        typical_norm = math.sqrt(features.shape[-1])
+        norm = scaled.norm(dim=-1, keepdim=True)
+        compressed = typical_norm * torch.tanh(norm / typical_norm)
+        return scaled * (compressed / (norm + 1e-12))
 
     @torch.no_grad()
     def sample_init_features(
@@ -81,6 +106,7 @@ class TiltLatentSelector:
         init_timesteps: torch.Tensor,
         sample_z: SampleZFn,
         score_fn: ScoreFn,
+        score_from_features_fn: Optional[ScoreFromFeaturesFn] = None,
         update_gram: bool = True,
         return_features: bool = False,
         num_samples: Optional[int] = None,
@@ -91,13 +117,34 @@ class TiltLatentSelector:
         n_candidates = self.candidate_multiplier * n
         z_candidates = sample_z(n_candidates)
 
+        # Pair each candidate z with `states_per_candidate` independently sampled
+        # states, compute a feature per (z, state), and average those features
+        # per candidate -- cuts noise in both the feature going into the Gram/
+        # feat_ms update AND (via score_from_features_fn, recomputed on the
+        # averaged feature with the current Ginv/ridge) the leverage score used
+        # for selection. We deliberately do NOT average the k raw per-state
+        # scores themselves: score = query^T Ginv query is a convex quadratic
+        # form, so mean(score_i) over states is a biased (Jensen's-inequality-
+        # inflated) estimate of "the score of the average feature" -- scoring
+        # the averaged feature directly is the correct quantity.
+        k = max(1, self.states_per_candidate)
+        z_repeated = z_candidates.repeat_interleave(k, dim=0)
         feature_candidates = self.sample_init_features(
             init_features=init_features,
             init_timesteps=init_timesteps,
-            num_samples=n_candidates,
+            num_samples=n_candidates * k,
         )
 
-        candidate_score, feature_stats = score_fn(feature_candidates, z_candidates)
+        score_repeated, feat_repeated = score_fn(feature_candidates, z_repeated)
+        feature_stats = feat_repeated.view(n_candidates, k, -1).mean(dim=1)
+        if k == 1:
+            candidate_score = score_repeated
+        elif score_from_features_fn is not None:
+            candidate_score = score_from_features_fn(feature_stats, z_candidates)
+        else:
+            # Fallback if the caller didn't wire score_from_features_fn: mean of
+            # the per-state scores (the biased estimate described above).
+            candidate_score = score_repeated.view(n_candidates, k).mean(dim=1)
 
         self._refresh_count += 1
 
@@ -141,12 +188,19 @@ class TiltLatentSelector:
             weight * (features.double() ** 2).mean().detach()
             for features, weight in batches
         ) / total_weight
-        self.feat_ms.mul_(self.beta).add_((1 - self.beta) * batch_ms)
+        if not self._feat_ms_seeded:
+            # First real batch: hard-set instead of EMA-blending into the
+            # arbitrary 1.0 init, which would otherwise take hundreds of steps
+            # (beta=0.995 -> N_eff~200) to catch up to the true feature scale --
+            # badly miscalibrating feature_scale()/the Gram during that window.
+            self.feat_ms = batch_ms.clone()
+            self._feat_ms_seeded = True
+        else:
+            self.feat_ms.mul_(self.beta).add_((1 - self.beta) * batch_ms)
 
-        scale = self.feature_scale()
+        normalized = [(self.normalized_features(features), weight)
+                      for features, weight in batches]
         gram_batch = sum(
-            weight
-            * ((features / scale).T @ (features / scale) / features.shape[0])
-            for features, weight in batches
+            weight * (nf.T @ nf) / nf.shape[0] for nf, weight in normalized
         ) / total_weight
         self.gram.mul_(self.beta).add_((1 - self.beta) * gram_batch)

@@ -227,6 +227,7 @@ class FB(AbstractAgent):
                     z=z_candidates,
                     step=step,
                 ),
+                score_from_features_fn=self.score_from_features,
                 update_gram=False,
                 return_features=True,
                 num_samples=sphere_count,
@@ -400,6 +401,38 @@ class FB(AbstractAgent):
         return selected_z
 
     @torch.no_grad()
+    def score_from_features(
+        self,
+        features: torch.Tensor,
+        z: torch.Tensor,
+    ) -> torch.Tensor:
+        """Leverage score of a given (already computed, possibly averaged over
+        several states) feature -- the part of score_and_features that doesn't
+        need a fresh actor/FB forward pass, split out so callers that already
+        have a feature (e.g. tilt.refresh, scoring an average over several
+        states per candidate) don't have to rerun the network to rescore it."""
+        trace_g = torch.trace(self.tilt.gram)
+        alpha_lam = self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0]
+        lam = max(alpha_lam, self._tilt_ridge_min)
+        if alpha_lam < self._tilt_ridge_min:
+            logger.warning(
+                "FB.score_from_features: tilt_ridge_min activated "
+                "(alpha_lam=%.4e < ridge_min=%.4e). gram may be degenerate.",
+                alpha_lam,
+                self._tilt_ridge_min,
+            )
+        identity = torch.eye(
+            features.shape[-1], device=features.device, dtype=features.dtype
+        )
+        ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
+        # The Gram is built from tilt.normalized_features(features), so the
+        # query must go through the same transform to keep the leverage score
+        # consistent.
+        query = z if self._tilting_by_z else self.tilt.normalized_features(features)
+        projected = query @ ginv
+        return torch.sum(projected * query, dim=1)
+
+    @torch.no_grad()
     def score_and_features(
         self,
         observations: torch.Tensor,
@@ -414,26 +447,7 @@ class FB(AbstractAgent):
             action=actions,
         )
         features = 0.5 * (target_f1 + target_f2)
-
-        trace_g = torch.trace(self.tilt.gram)
-        alpha_lam = self._tilt_ridge_alpha * trace_g.item() / self.tilt.gram.shape[0]
-        lam = max(alpha_lam, self._tilt_ridge_min)
-        if alpha_lam < self._tilt_ridge_min:
-            logger.warning(
-                "FB.score_and_features: tilt_ridge_min activated "
-                "(alpha_lam=%.4e < ridge_min=%.4e). gram may be degenerate.",
-                alpha_lam,
-                self._tilt_ridge_min,
-            )
-        identity = torch.eye(
-            features.shape[-1], device=features.device, dtype=features.dtype
-        )
-        ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
-        # The Gram is built from features divided by tilt.feature_scale(), so the
-        # query must use the same scale to keep the leverage score consistent.
-        query = z if self._tilting_by_z else features / self.tilt.feature_scale()
-        projected = query @ ginv
-        score = torch.sum(projected * query, dim=1)
+        score = self.score_from_features(features, z)
         return score, features
 
     def update_fb(

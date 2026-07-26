@@ -657,6 +657,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     z=z_candidates,
                     step=step,
                 ),
+                score_from_features_fn=agent.score_from_features,
             )
         finally:
             agent.tilt.temperature = previous_temperature

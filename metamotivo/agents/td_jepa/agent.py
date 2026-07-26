@@ -372,6 +372,7 @@ class TDJEPAAgent:
                         z=z_candidates,
                         centering=False,
                     ),
+                    score_from_features_fn=self.score_from_features,
                     update_gram=False,
                     return_features=True,
                     num_samples=sphere_count,
@@ -451,6 +452,31 @@ class TDJEPAAgent:
 
         return metrics
 
+    def score_from_features(self, v_metric, z):
+        """Leverage score of an already-computed (possibly multi-state-averaged)
+        feature -- split out of score_and_grad so callers that already have a
+        feature (e.g. tilt.refresh scoring an average over several states per
+        candidate) don't have to rerun the encoder/predictor to rescore it."""
+        with torch.no_grad():
+            trace_G = torch.trace(self.tilt.gram)
+            lam = torch.maximum(
+                self.cfg.train.tilt_ridge_alpha * trace_G / self.tilt.gram.shape[0],
+                torch.tensor(
+                    self.cfg.train.tilt_ridge_min,
+                    device=self.tilt.gram.device,
+                    dtype=self.tilt.gram.dtype,
+                ),
+            )
+            identity = torch.eye(v_metric.shape[-1], device=v_metric.device, dtype=v_metric.dtype)
+            ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
+
+        # The Gram is built from tilt.normalized_features(v_metric), so the
+        # query must go through the same transform to keep the leverage score
+        # consistent.
+        query = z if self.cfg.train.tilting_by_z else self.tilt.normalized_features(v_metric)
+        qg = query @ ginv
+        return torch.sum(qg * query, dim=1)
+
     def score_and_grad(self, phi_obs, z, centering=False):
         z = z.detach().clone().requires_grad_(True)
 
@@ -470,24 +496,7 @@ class TDJEPAAgent:
         else:
             v_metric = v
 
-        with torch.no_grad():
-            trace_G = torch.trace(self.tilt.gram)
-            lam = torch.maximum(
-                self.cfg.train.tilt_ridge_alpha * trace_G / self.tilt.gram.shape[0],
-                torch.tensor(
-                    self.cfg.train.tilt_ridge_min,
-                    device=self.tilt.gram.device,
-                    dtype=self.tilt.gram.dtype,
-                ),
-            )
-            identity = torch.eye(v_metric.shape[-1], device=v_metric.device, dtype=v_metric.dtype)
-            ginv = torch.linalg.pinv(self.tilt.gram + lam * identity)
-
-        # The Gram is built from features divided by tilt.feature_scale(), so the
-        # query must use the same scale to keep the leverage score consistent.
-        query = z if self.cfg.train.tilting_by_z else v_metric / self.tilt.feature_scale()
-        qg = query @ ginv
-        score = torch.sum(qg * query, dim=1)
+        score = self.score_from_features(v_metric, z)
         return score, v_metric
 
     def sample_action_from_latent(self, latent: torch.Tensor, z: torch.Tensor, mean: bool = False) -> torch.Tensor:
