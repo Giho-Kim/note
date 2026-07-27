@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 from agents.fb.models import ForwardBackwardRepresentation, ActorModel
 from agents.base import AbstractAgent, Batch, AbstractGaussianActor
 from agents.utils import schedule
-from metamotivo.agents.tilt import TiltLatentSelector
+from metamotivo.agents.tilt import TiltLatentSelector, weighted_select
 
 
 class FB(AbstractAgent):
@@ -64,6 +64,7 @@ class FB(AbstractAgent):
         device: torch.device,
         name: str,
         tilt_goal: bool = False,
+        tilt_refresh_interval: int = 1,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -147,6 +148,7 @@ class FB(AbstractAgent):
         self._tilt_ridge_min = tilt_ridge_min
         self._tilt_start_step = tilt_start_step
         self._tilt_goal = tilt_goal
+        self._tilt_refresh_interval = max(1, tilt_refresh_interval)
         self.std_dev_schedule = std_dev_schedule
         self.tilt = None
         if tilt:
@@ -217,21 +219,28 @@ class FB(AbstractAgent):
         sphere_features = None
         if self.tilt is not None and step >= self._tilt_start_step:
             self.tilt.temperature = self._tilt_temperature(step)
+        score_this_step = self._tilt_score_this_step(step)
         if self._tilt_active(step) and sphere_count > 0:
-            _, sphere_features = self.tilt.refresh(
-                init_features=batch.observations,
-                init_timesteps=batch.timesteps,
-                sample_z=lambda size: self.sample_z(size=size),
-                score_fn=lambda observations, z_candidates: self.score_and_features(
-                    observations=observations,
-                    z=z_candidates,
-                    step=step,
-                ),
-                score_from_features_fn=self.score_from_features,
-                update_gram=False,
-                return_features=True,
-                num_samples=sphere_count,
-            )
+            if score_this_step:
+                _, sphere_features = self.tilt.refresh(
+                    init_features=batch.observations,
+                    init_timesteps=batch.timesteps,
+                    sample_z=lambda size: self.sample_z(size=size),
+                    score_fn=lambda observations, z_candidates: self.score_and_features(
+                        observations=observations,
+                        z=z_candidates,
+                        step=step,
+                    ),
+                    score_from_features_fn=self.score_from_features,
+                    update_gram=False,
+                    return_features=True,
+                    num_samples=sphere_count,
+                )
+            else:
+                # Cheap path: no new forward passes -- re-select from the last
+                # refresh()'s cached candidate pool at the current temperature
+                # (see TiltLatentSelector.resample).
+                self.tilt.resample(n=sphere_count)
         zs, goal_features, goal_fraction = self.sample_mixed_z(
             train_goal=backward_input,
             init_observations=batch.observations,
@@ -239,6 +248,7 @@ class FB(AbstractAgent):
             step=step,
             return_goal_features=True,
             mix_indices=mix_indices,
+            score=score_this_step,
         )
         if sphere_features is not None:
             gram_batches = [(sphere_features, 1.0 - goal_fraction)]
@@ -285,6 +295,19 @@ class FB(AbstractAgent):
     def _tilt_active(self, step: int) -> bool:
         return self.tilt is not None and step >= self._tilt_start_step
 
+    def _tilt_score_this_step(self, step: int) -> bool:
+        """Whether this step pays for the full oversampled-candidate leverage
+        scoring (score_and_features + score_from_features, the ~85% of tilt's
+        overhead) and the resulting Gram/feat_ms update. On off steps, z's are
+        still leverage-weighted -- just cheaply re-selected (fresh softmax +
+        multinomial, no new forward passes) from the LAST scoring step's
+        cached candidate pool via TiltLatentSelector.resample(), so the pool
+        itself goes stale until the next scoring step but the selection stays
+        informed rather than falling back to plain random."""
+        if not self._tilt_active(step):
+            return False
+        return (step - self._tilt_start_step) % self._tilt_refresh_interval == 0
+
     @torch.no_grad()
     def sample_mixed_z(
         self,
@@ -294,6 +317,7 @@ class FB(AbstractAgent):
         step: Optional[int] = None,
         return_goal_features: bool = False,
         mix_indices: Optional[np.ndarray] = None,
+        score: bool = True,
     ):
         if mix_indices is None:
             mix_indices = np.where(
@@ -338,6 +362,7 @@ class FB(AbstractAgent):
                         step=step,
                         tilt_selection=self._tilt_goal,
                         return_features=True,
+                        score=score,
                     )
                 else:
                     mix_zs = self.FB.backward_representation(
@@ -362,8 +387,34 @@ class FB(AbstractAgent):
         step: int,
         tilt_selection: bool,
         return_features: bool = False,
+        score: bool = True,
     ):
-        """Build a goal candidate pool and optionally select from it by tilt score."""
+        """Build a goal candidate pool and optionally select from it by tilt score.
+
+        score=False skips the expensive oversampled-candidate leverage scoring
+        (score_and_features + score_from_features, ~85% of this call's cost)
+        entirely: instead of scoring a fresh pool, cheaply RE-selects (fresh
+        softmax+multinomial, no new forward passes) from the last score=True
+        call's cached candidate pool (TiltLatentSelector.goal_candidate_z/
+        goal_candidate_score) at the current temperature. Falls back to a
+        plain random pick from real batch observations if there's no cache yet
+        (first tilt-active step) or tilt_selection is off (no scoring signal
+        to reuse). Either way returns no features, so the caller's Gram/
+        feat_ms update is skipped for this call."""
+        if not score:
+            if tilt_selection and self.tilt.goal_candidate_z is not None:
+                idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
+                    self.tilt.goal_candidate_score, self.tilt.temperature, size
+                )
+                z = self.tilt.goal_candidate_z[idx]
+            else:
+                goal_idx = torch.randint(
+                    0, train_goal.shape[0], (size,), device=train_goal.device
+                )
+                z = self.FB.backward_representation(train_goal[goal_idx]).detach()
+                z = math.sqrt(self._z_dimension) * torch.nn.functional.normalize(z, dim=1)
+            return (z, None) if return_features else z
+
         candidate_size = self.tilt.candidate_multiplier * size
         goal_idx = torch.randint(
             0, train_goal.shape[0], (candidate_size,), device=train_goal.device
@@ -374,23 +425,35 @@ class FB(AbstractAgent):
             z_candidates, dim=1
         )
 
+        # Same states_per_candidate averaging as TiltLatentSelector.refresh: score
+        # each candidate goal z against several independently sampled states and
+        # average the FEATURE (not the raw scores -- see refresh's docstring for
+        # why averaging scores directly would be Jensen-inequality-biased), then
+        # rescore the averaged feature for the actual selection.
+        k = max(1, self.tilt.states_per_candidate)
+        z_repeated = z_candidates.repeat_interleave(k, dim=0)
         score_observations = self.tilt.sample_init_features(
             init_features=init_observations,
             init_timesteps=init_timesteps,
-            num_samples=candidate_size,
+            num_samples=candidate_size * k,
         )
-        candidate_score, goal_features = self.score_and_features(
+        score_repeated, feat_repeated = self.score_and_features(
             observations=score_observations,
-            z=z_candidates,
+            z=z_repeated,
             step=step,
         )
+        goal_features = feat_repeated.view(candidate_size, k, -1).mean(dim=1)
+        candidate_score = (
+            score_repeated
+            if k == 1
+            else self.score_from_features(goal_features, z_candidates)
+        )
         if tilt_selection:
-            logits = candidate_score / self.tilt.temperature
-            logits = logits - logits.max()
-            prob = torch.softmax(logits, dim=0)
-            selected_idx = torch.multinomial(
-                prob, num_samples=size, replacement=False
+            selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
+                weighted_select(candidate_score, self.tilt.temperature, size)
             )
+            self.tilt.goal_candidate_z = z_candidates
+            self.tilt.goal_candidate_score = candidate_score
         else:
             selected_idx = torch.randperm(candidate_size, device=train_goal.device)[
                 :size

@@ -35,6 +35,23 @@ def sample_init_indices(
     return torch.multinomial(init_weights, num_samples=num_samples, replacement=True)
 
 
+def weighted_select(
+    candidate_score: torch.Tensor, temperature: float, n: int
+) -> Tuple[torch.Tensor, float, float]:
+    """Softmax(candidate_score / temperature) then multinomial-without-
+    replacement selection of n indices. Factored out of refresh() so a cached
+    candidate pool's scores can be cheaply RE-selected from on later calls
+    (a fresh draw at the current temperature, no new forward passes) instead
+    of only ever selecting once right after scoring -- see
+    TiltLatentSelector.resample()."""
+    n = min(n, candidate_score.shape[0])
+    logits = candidate_score / temperature
+    logits = logits - logits.max()
+    prob = torch.softmax(logits, dim=0)
+    idx = torch.multinomial(prob, num_samples=n, replacement=False)
+    return idx, float(prob.min()), float(prob.max())
+
+
 @dataclass
 class TiltLatentSelector:
     """Maintains and refreshes a latent pool using a task-coverage score."""
@@ -49,7 +66,6 @@ class TiltLatentSelector:
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
         self.gram = torch.eye(dim, device=self.z.device, dtype=self.z.dtype)
-        self.running_mean = torch.zeros(dim, device=self.z.device, dtype=self.z.dtype)
         # Running mean-square of the (unbounded) forward features, used as a
         # single global scale so the Gram matrix stays well-conditioned even if
         # the FB feature norm diverges. Relative magnitudes across candidates are
@@ -65,6 +81,16 @@ class TiltLatentSelector:
         self._refresh_count = 0
         self.last_prob_min = float("nan")
         self.last_prob_max = float("nan")
+        # Cache of the last refresh()'s (oversampled candidate z, its score)
+        # pool, so resample() can cheaply re-select from it between refreshes
+        # without paying for new forward passes. goal_candidate_{z,score} is
+        # the analogous cache for goal-conditioned z selection (populated by
+        # FB/TDJEPA's sample_goal_z_candidates, which owns that scoring since
+        # it isn't part of this class's own sphere-z pool).
+        self._candidate_z: Optional[torch.Tensor] = None
+        self._candidate_score: Optional[torch.Tensor] = None
+        self.goal_candidate_z: Optional[torch.Tensor] = None
+        self.goal_candidate_score: Optional[torch.Tensor] = None
 
     def feature_scale(self) -> torch.Tensor:
         """Global scale (RMS) applied to forward features before the Gram."""
@@ -148,25 +174,34 @@ class TiltLatentSelector:
 
         self._refresh_count += 1
 
-        logits = candidate_score / self.temperature
-        logits = logits - logits.max()
-        prob = torch.softmax(logits, dim=0)
-        self.last_prob_min = float(prob.min())
-        self.last_prob_max = float(prob.max())
-        selected_idx = torch.multinomial(prob, num_samples=n, replacement=False)
-
-        if self._refresh_count % 10000 == 0:
-            logger.warning(
-                "TiltLatentSelector.refresh: diag feat_max=%.4e feat_finite=%s ",
-                feature_stats.abs().max().item(),
-                feature_stats.abs().min().item(),
-            )
-
+        selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
+            candidate_score, self.temperature, n
+        )
         self.z = z_candidates[selected_idx]
+        self._candidate_z = z_candidates
+        self._candidate_score = candidate_score
         if update_gram:
             self.update_gram(((feature_stats, 1.0),))
         if return_features:
             return self.z, feature_stats
+        return self.z
+
+    @torch.no_grad()
+    def resample(self, n: Optional[int] = None) -> torch.Tensor:
+        """Cheap re-selection from the LAST refresh()'s cached (candidate z,
+        score) pool: a fresh softmax(temperature)+multinomial draw, no new
+        forward passes. Use between refresh() calls (e.g. under a
+        tilt_refresh_interval) to keep every step's z leverage-informed
+        without paying refresh()'s oversampled-candidate scoring cost every
+        step -- the tradeoff is the pool itself goes stale until the next
+        refresh()."""
+        if self._candidate_z is None:
+            raise RuntimeError("resample() called before any refresh().")
+        n = self.z.shape[0] if n is None else n
+        selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
+            self._candidate_score, self.temperature, n
+        )
+        self.z = self._candidate_z[selected_idx]
         return self.z
 
     @torch.no_grad()

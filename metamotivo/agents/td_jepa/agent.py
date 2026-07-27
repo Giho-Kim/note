@@ -16,7 +16,7 @@ from metamotivo.base import BaseConfig
 from metamotivo.envs.utils.gym_spaces import json_to_space, space_to_json
 
 from ...nn_models import _soft_update_params, eval_mode, weight_init
-from ..tilt import TiltLatentSelector
+from ..tilt import TiltLatentSelector, weighted_select
 from .model import TDJEPAModel, TDJEPAModelConfig
 
 
@@ -52,6 +52,7 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_ridge_min: float = 1e-8
     tilt_start_step: int = 0
     tilt_goal: bool = False
+    tilt_refresh_interval: int = 1
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -184,6 +185,17 @@ class TDJEPAAgent:
             return True
         return step >= self.cfg.train.tilt_start_step
 
+    def _tilt_score_this_step(self, step: Optional[int]) -> bool:
+        """See FB._tilt_score_this_step: z's are always freshly sampled every
+        step; only the informed (leverage-weighted) selection among an
+        oversampled candidate pool, and the resulting Gram/feat_ms update, are
+        amortized to every tilt_refresh_interval-th step."""
+        if not self._tilt_active(step):
+            return False
+        if step is None:
+            return True
+        return (step - self.cfg.train.tilt_start_step) % self.cfg.train.tilt_refresh_interval == 0
+
     @torch.no_grad()
     def sample_mixed_z(
         self,
@@ -193,6 +205,7 @@ class TDJEPAAgent:
         step: Optional[int] = None,
         return_goal_features: bool = False,
         goal_mask: Optional[torch.Tensor] = None,
+        score: bool = True,
         *args,
         **kwargs,
     ):
@@ -234,6 +247,7 @@ class TDJEPAAgent:
                     size=int(goal_mask.sum().item()),
                     tilt_selection=self.cfg.train.tilt_goal,
                     return_features=True,
+                    score=score,
                 )
                 z[goal_mask] = selected_z
             else:
@@ -254,30 +268,66 @@ class TDJEPAAgent:
         size: int,
         tilt_selection: bool,
         return_features: bool = False,
+        score: bool = True,
     ):
-        """Build a goal candidate pool and optionally select from it by tilt score."""
+        """Build a goal candidate pool and optionally select from it by tilt score.
+
+        score=False skips the expensive oversampled-candidate leverage scoring
+        entirely: instead of scoring a fresh pool, cheaply RE-selects (fresh
+        softmax+multinomial, no new forward passes) from the last score=True
+        call's cached candidate pool (TiltLatentSelector.goal_candidate_z/
+        goal_candidate_score) at the current temperature. Falls back to a
+        plain random pick from real batch observations if there's no cache yet
+        (first tilt-active step) or tilt_selection is off (no scoring signal
+        to reuse). Either way returns no features, so the caller's Gram/
+        feat_ms update is skipped for this call."""
+        if not score:
+            if tilt_selection and self.tilt.goal_candidate_z is not None:
+                idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
+                    self.tilt.goal_candidate_score, self.tilt.temperature, size
+                )
+                z = self.tilt.goal_candidate_z[idx]
+            else:
+                goal_idx = torch.randint(
+                    0, train_goal.shape[0], (size,), device=train_goal.device
+                )
+                z = self.project_train_goals(train_goal[goal_idx])
+            return (z, None) if return_features else z
+
         candidate_size = self.cfg.train.tilt_candidate_multiplier * size
         goal_idx = torch.randint(
             0, train_goal.shape[0], (candidate_size,), device=train_goal.device
         )
         z_candidates = self.project_train_goals(train_goal[goal_idx])
+
+        # Same states_per_candidate averaging as TiltLatentSelector.refresh: score
+        # each candidate goal z against several independently sampled states and
+        # average the FEATURE (not the raw scores -- see refresh's docstring for
+        # why averaging scores directly would be Jensen-inequality-biased), then
+        # rescore the averaged feature for the actual selection.
+        k = max(1, self.tilt.states_per_candidate)
+        z_repeated = z_candidates.repeat_interleave(k, dim=0)
         score_features = self.tilt.sample_init_features(
             init_features=init_features,
             init_timesteps=init_timesteps,
-            num_samples=candidate_size,
+            num_samples=candidate_size * k,
         )
-        candidate_score, goal_features = self.score_and_grad(
+        score_repeated, feat_repeated = self.score_and_grad(
             phi_obs=score_features,
-            z=z_candidates,
-            centering=False,
+            z=z_repeated,
+        )
+        goal_features = feat_repeated.view(candidate_size, k, -1).mean(dim=1)
+        candidate_score = (
+            score_repeated
+            if k == 1
+            else self.score_from_features(goal_features, z_candidates)
         )
         if tilt_selection:
-            logits = candidate_score / self.tilt.temperature
-            logits = logits - logits.max()
-            prob = torch.softmax(logits, dim=0)
-            selected_idx = torch.multinomial(
-                prob, num_samples=size, replacement=False
+            selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
+                weighted_select(candidate_score, self.tilt.temperature, size)
             )
+            self.tilt.goal_candidate_z = z_candidates
+            self.tilt.goal_candidate_score = candidate_score
         else:
             selected_idx = torch.randperm(candidate_size, device=train_goal.device)[
                 :size
@@ -352,6 +402,7 @@ class TDJEPAAgent:
             < self.cfg.train.train_goal_ratio
         )
         sphere_count = int((~goal_mask).sum().item())
+        score_this_step = self._tilt_score_this_step(step)
         if self._tilt_active(step) and sphere_count > 0:
             if init_obs is None:
                 raise ValueError("TD-JEPA tilt requires init_obs during training.")
@@ -363,20 +414,25 @@ class TDJEPAAgent:
                 init_obs = self._model._obs_normalizer(init_obs)
                 init_obs = self._model._augmentator(init_obs)
                 phi_init_obs = self._model._phi_rgb_encoder(init_obs)
-                _, sphere_features = self.tilt.refresh(
-                    init_features=phi_init_obs,
-                    init_timesteps=tilt_init_steps,
-                    sample_z=lambda size: self._model.sample_z(size, device=self.device),
-                    score_fn=lambda obs_features, z_candidates: self.score_and_grad(
-                        phi_obs=obs_features,
-                        z=z_candidates,
-                        centering=False,
-                    ),
-                    score_from_features_fn=self.score_from_features,
-                    update_gram=False,
-                    return_features=True,
-                    num_samples=sphere_count,
-                )
+                if score_this_step:
+                    _, sphere_features = self.tilt.refresh(
+                        init_features=phi_init_obs,
+                        init_timesteps=tilt_init_steps,
+                        sample_z=lambda size: self._model.sample_z(size, device=self.device),
+                        score_fn=lambda obs_features, z_candidates: self.score_and_grad(
+                            phi_obs=obs_features,
+                            z=z_candidates,
+                        ),
+                        score_from_features_fn=self.score_from_features,
+                        update_gram=False,
+                        return_features=True,
+                        num_samples=sphere_count,
+                    )
+                else:
+                    # Cheap path: no new forward passes -- re-select from the
+                    # last refresh()'s cached candidate pool at the current
+                    # temperature (see TiltLatentSelector.resample).
+                    self.tilt.resample(n=sphere_count)
         elif self._tilt_active(step):
             if init_obs is None:
                 raise ValueError("TD-JEPA tilt requires init_obs during training.")
@@ -400,6 +456,7 @@ class TDJEPAAgent:
             step=step,
             return_goal_features=True,
             goal_mask=goal_mask,
+            score=score_this_step,
         )
         if sphere_features is not None:
             gram_batches = [(sphere_features, 1.0 - goal_fraction)]
@@ -477,7 +534,7 @@ class TDJEPAAgent:
         qg = query @ ginv
         return torch.sum(qg * query, dim=1)
 
-    def score_and_grad(self, phi_obs, z, centering=False):
+    def score_and_grad(self, phi_obs, z):
         z = z.detach().clone().requires_grad_(True)
 
         with torch.no_grad():
@@ -491,11 +548,7 @@ class TDJEPAAgent:
         else:
             v = target_phi_predictors
 
-        if centering:
-            v_metric = v - self.tilt.running_mean.detach()
-        else:
-            v_metric = v
-
+        v_metric = v
         score = self.score_from_features(v_metric, z)
         return score, v_metric
 

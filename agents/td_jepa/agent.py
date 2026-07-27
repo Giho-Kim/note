@@ -114,6 +114,7 @@ class TDJEPA(AbstractAgent):
         actor_hidden_layers: int,
         actor_embedding_layers: int,
         tilt_goal: bool = False,
+        tilt_refresh_interval: int = 1,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -208,6 +209,7 @@ class TDJEPA(AbstractAgent):
             tilt_ridge_min=tilt_ridge_min,
             tilt_start_step=tilt_start_step,
             tilt_goal=tilt_goal,
+            tilt_refresh_interval=tilt_refresh_interval,
         )
         cfg = TDJEPAAgentConfig(model=model_cfg, train=train_cfg, compile=compile)
         self.agent = MetaTDJEPAAgent(obs_space=self._obs_space, action_dim=action_length, cfg=cfg)

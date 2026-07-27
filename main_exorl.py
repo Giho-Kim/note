@@ -40,6 +40,7 @@ parser.add_argument("--tilt_init_geom_ratio", type=float)
 parser.add_argument("--tilt_ridge_alpha", type=float)
 parser.add_argument("--tilt_ridge_min", type=float)
 parser.add_argument("--tilt_start_step", type=int)
+parser.add_argument("--tilt_refresh_interval", type=int)
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -132,6 +133,7 @@ tilt_init_geom_ratio_override = cli_args.pop("tilt_init_geom_ratio", None)
 tilt_ridge_alpha_override = cli_args.pop("tilt_ridge_alpha", None)
 tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
 tilt_start_step_override = cli_args.pop("tilt_start_step", None)
+tilt_refresh_interval_override = cli_args.pop("tilt_refresh_interval", None)
 config.update(cli_args)
 if tilt_beta_override is not None:
     config["tilt_beta"] = tilt_beta_override
@@ -170,6 +172,12 @@ if tilt_start_step_override is not None:
     config["tilt_start_step"] = tilt_start_step_override
 if "tilt_start_step" not in config:
     config["tilt_start_step"] = 0
+if tilt_refresh_interval_override is not None:
+    if tilt_refresh_interval_override <= 0:
+        raise ValueError("tilt_refresh_interval must be positive.")
+    config["tilt_refresh_interval"] = tilt_refresh_interval_override
+if "tilt_refresh_interval" not in config:
+    config["tilt_refresh_interval"] = 1
 
 config["device"] = torch.device(
     "cuda"
@@ -354,6 +362,7 @@ elif config["algorithm"] == "td_jepa":
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
+        tilt_refresh_interval=config["tilt_refresh_interval"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -445,6 +454,7 @@ elif config["algorithm"] == "fb":
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
+        tilt_refresh_interval=config["tilt_refresh_interval"],
         device=config["device"],
         name=config["name"],
     )
@@ -519,6 +529,7 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         tilt_ridge_alpha=config["tilt_ridge_alpha"],
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
+        tilt_refresh_interval=config["tilt_refresh_interval"],
     )
 
     replay_buffer = FBReplayBuffer(

@@ -62,6 +62,7 @@ class CFB(FB):
         tilt_init_geom_ratio: Optional[float] = None,
         tilt_ridge_alpha: float = 0.1,
         tilt_ridge_min: float = 1e-8,
+        tilt_refresh_interval: int = 1,
     ):
         assert vcfb != mcfb
         self.vcfb = vcfb
@@ -116,6 +117,7 @@ class CFB(FB):
             tilt_init_geom_ratio=tilt_init_geom_ratio,
             tilt_ridge_alpha=tilt_ridge_alpha,
             tilt_ridge_min=tilt_ridge_min,
+            tilt_refresh_interval=tilt_refresh_interval,
         )
 
         # total_action_samples must be divisible by 4
