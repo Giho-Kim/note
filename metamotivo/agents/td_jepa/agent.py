@@ -284,7 +284,8 @@ class TDJEPAAgent:
         if not score:
             if tilt_selection and self.tilt.goal_candidate_z is not None:
                 idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
-                    self.tilt.goal_candidate_score, self.tilt.temperature, size
+                    self.tilt.goal_candidate_score, self.tilt.temperature, size,
+                    self.tilt.uniform_mix,
                 )
                 z = self.tilt.goal_candidate_z[idx]
             else:
@@ -324,7 +325,9 @@ class TDJEPAAgent:
         )
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
-                weighted_select(candidate_score, self.tilt.temperature, size)
+                weighted_select(
+                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix
+                )
             )
             self.tilt.goal_candidate_z = z_candidates
             self.tilt.goal_candidate_score = candidate_score

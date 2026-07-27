@@ -1,7 +1,6 @@
 """Reusable latent selection utilities for tilt-style agents."""
 
 import logging
-import math
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence, Tuple
 
@@ -36,18 +35,34 @@ def sample_init_indices(
 
 
 def weighted_select(
-    candidate_score: torch.Tensor, temperature: float, n: int
+    candidate_score: torch.Tensor,
+    temperature: float,
+    n: int,
+    uniform_mix: float = 0.5,
 ) -> Tuple[torch.Tensor, float, float]:
     """Softmax(candidate_score / temperature) then multinomial-without-
     replacement selection of n indices. Factored out of refresh() so a cached
     candidate pool's scores can be cheaply RE-selected from on later calls
     (a fresh draw at the current temperature, no new forward passes) instead
     of only ever selecting once right after scoring -- see
-    TiltLatentSelector.resample()."""
-    n = min(n, candidate_score.shape[0])
+    TiltLatentSelector.resample().
+
+    uniform_mix blends in a uniform component: prob = uniform_mix/n_total +
+    (1-uniform_mix)*softmax. Temperature alone can't guarantee a floor/cap on
+    selection probability -- if candidate_score's own spread drifts (e.g. from
+    upstream feature-scale drift), even a large fixed temperature can still
+    end up fully collapsed onto one candidate (softmax_i -> 1). The uniform
+    mix caps this structurally regardless of how extreme the scores get:
+    p_i >= uniform_mix/n_total (no candidate fully starved) and
+    p_i <= uniform_mix/n_total + (1-uniform_mix) (no candidate can take more
+    than (1-uniform_mix) of the selection mass, however degenerate the
+    scores)."""
+    n_total = candidate_score.shape[0]
+    n = min(n, n_total)
     logits = candidate_score / temperature
     logits = logits - logits.max()
-    prob = torch.softmax(logits, dim=0)
+    softmax_prob = torch.softmax(logits, dim=0)
+    prob = uniform_mix / n_total + (1 - uniform_mix) * softmax_prob
     idx = torch.multinomial(prob, num_samples=n, replacement=False)
     return idx, float(prob.min()), float(prob.max())
 
@@ -62,6 +77,7 @@ class TiltLatentSelector:
     candidate_multiplier: int = 10
     init_geom_ratio: Optional[float] = None
     states_per_candidate: int = 2
+    uniform_mix: float = 0.5
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -97,21 +113,12 @@ class TiltLatentSelector:
         return (torch.sqrt(self.feat_ms) + 1e-8).to(self.z.dtype)
 
     def normalized_features(self, features: torch.Tensor) -> torch.Tensor:
-        """Divide by feature_scale() (the drifting global RMS) then tanh-compress
-        each row's own norm around sqrt(D) -- the expected norm of a "typical"
-        row once feature_scale() has made every dimension ~unit variance. Needs
-        no new tunable threshold: sqrt(D) falls straight out of feature_scale()'s
-        own definition. Unlike feature_scale() alone (a single scalar shared by
-        every row, which provably cannot change the Gram's eigenvalue ratios --
-        uniform rescaling preserves conditioning exactly), this compresses each
-        row by its OWN amount, so genuine outlier candidates get pulled toward
-        the pack instead of dominating the Gram, while typical-magnitude rows
-        pass through nearly unchanged (tanh is ~linear near 0)."""
-        scaled = features / self.feature_scale()
-        typical_norm = math.sqrt(features.shape[-1])
-        norm = scaled.norm(dim=-1, keepdim=True)
-        compressed = typical_norm * torch.tanh(norm / typical_norm)
-        return scaled * (compressed / (norm + 1e-12))
+        """Divide by feature_scale() (the drifting global RMS). A single scalar
+        shared by every row, so it keeps Gram's trace at ~z_dimension but
+        provably cannot change the Gram's eigenvalue ratios (conditioning) --
+        that's a property of the underlying features, not something this
+        rescaling step can fix."""
+        return features / self.feature_scale()
 
     @torch.no_grad()
     def sample_init_features(
@@ -175,7 +182,7 @@ class TiltLatentSelector:
         self._refresh_count += 1
 
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            candidate_score, self.temperature, n
+            candidate_score, self.temperature, n, self.uniform_mix
         )
         self.z = z_candidates[selected_idx]
         self._candidate_z = z_candidates
@@ -199,7 +206,7 @@ class TiltLatentSelector:
             raise RuntimeError("resample() called before any refresh().")
         n = self.z.shape[0] if n is None else n
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            self._candidate_score, self.temperature, n
+            self._candidate_score, self.temperature, n, self.uniform_mix
         )
         self.z = self._candidate_z[selected_idx]
         return self.z
