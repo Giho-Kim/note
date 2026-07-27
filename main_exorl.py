@@ -66,6 +66,9 @@ parser.add_argument("--cql_alpha", type=float, default=0.01)
 parser.add_argument("--z_mix_ratio", type=float)
 parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--save_every", action="store_true")
+parser.add_argument("--checkpoint_path", type=str, default=None)
+parser.add_argument("--resume_step", type=int, default=0)
+parser.add_argument("--eval_frequency", type=int, default=None)
 args = parser.parse_args()
 
 if args.wandb_logging == "True":
@@ -134,7 +137,12 @@ tilt_ridge_alpha_override = cli_args.pop("tilt_ridge_alpha", None)
 tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
 tilt_start_step_override = cli_args.pop("tilt_start_step", None)
 tilt_refresh_interval_override = cli_args.pop("tilt_refresh_interval", None)
+eval_frequency_override = cli_args.pop("eval_frequency", None)
 config.update(cli_args)
+if eval_frequency_override is not None:
+    if eval_frequency_override <= 0:
+        raise ValueError("eval_frequency must be positive.")
+    config["eval_frequency"] = eval_frequency_override
 if tilt_beta_override is not None:
     config["tilt_beta"] = tilt_beta_override
 if tilt_temperature_start_override is not None:
@@ -641,6 +649,18 @@ elif config["algorithm"] == "sf-lap":
 else:
     raise NotImplementedError(f"Algorithm {config['algorithm']} not implemented")
 
+if config["checkpoint_path"] is not None:
+    checkpoint_path = Path(config["checkpoint_path"])
+    print(f"Loading agent checkpoint from {checkpoint_path}")
+    agent = torch.load(checkpoint_path, map_location=config["device"], weights_only=False)
+    agent.to(config["device"])
+    agent._device = config["device"]  # pylint: disable=protected-access
+    # checkpoint saves overwrite agent._name with the (int) step number just
+    # before pickling (see OfflineRLWorkspace.train), which then breaks
+    # wandb.init(tags=[agent.name]) on resume -- restore the algorithm name.
+    agent._name = config["name"]  # pylint: disable=protected-access
+    agent.train()
+
 workspace = OfflineRLWorkspace(
     reward_constructor=reward_constructor,
     learning_steps=config["learning_steps"],
@@ -665,4 +685,5 @@ if __name__ == "__main__":
         tasks=config["eval_tasks"],
         agent_config=config,
         replay_buffer=replay_buffer,
+        start_step=config["resume_step"],
     )

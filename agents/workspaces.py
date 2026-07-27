@@ -110,6 +110,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         tasks: List[str],
         agent_config: Dict,
         replay_buffer: Union[OfflineReplayBuffer, FBReplayBuffer],
+        start_step: int = 0,
     ) -> None:
         """
         Trains an offline RL algorithm on one task.
@@ -151,7 +152,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     inference_steps=self.z_inference_steps
                 )
 
-        for i in tqdm(range(self.learning_steps + 1)):
+        for i in tqdm(range(start_step, self.learning_steps + 1)):
 
             batch = replay_buffer.sample(agent.batch_size)
             train_metrics = agent.update(batch=batch, step=i)
@@ -242,6 +243,121 @@ class OfflineRLWorkspace(AbstractWorkspace):
             run.finish()
 
         # delete local models
+        shutil.rmtree(model_path)
+
+    def train_btd(
+        self,
+        agent: FB,
+        tasks: List[str],
+        agent_config: Dict,
+        replay_buffer: FBReplayBuffer,
+        z_sampler,
+        tasks_per_batch: int,
+        transitions_per_task: int,
+        start_step: int = 0,
+    ) -> None:
+        """
+        Actor-only fine-tuning with z drawn from a frozen Basis Trajectory
+        Distribution (a GMM over subtrajectory feature summaries) instead of
+        Unif(S^{d-1}). F and B are expected to already be frozen by the
+        caller -- this loop never touches them (no update_fb, no target
+        network updates).
+        """
+        run = None
+        if self.wandb_logging:
+            run = wandb.init(
+                config=agent_config,
+                tags=[agent.name, "btd"],
+                reinit=True,
+                settings=wandb.Settings(console="off", _disable_stats=True, silent=True),
+            )
+            _configure_wandb_run(run)
+            model_path = self.model_dir / run.name
+            makedirs(str(model_path))
+
+        else:
+            date = datetime.today().strftime("Y-%m-%d-%H-%M-%S")
+            model_path = self.model_dir / f"local-run-{date}"
+            makedirs(str(model_path))
+
+        logger.info(f"BTD actor-only training for {agent.name}.")
+        best_mean_task_reward = -np.inf
+        best_model_path = None
+        batch_size = tasks_per_batch * transitions_per_task
+
+        # sample set transitions for z inference (used by eval(), unrelated to BTD)
+        if self.domain_name == "point_mass_maze":
+            self.goal_states = {}
+            for task, goal_state in point_mass_maze_goals.items():
+                self.goal_states[task] = torch.tensor(
+                    goal_state, dtype=torch.float32, device=self.device
+                ).unsqueeze(0)
+        else:
+            (
+                self.observations_z,
+                self.rewards_z,
+            ) = replay_buffer.sample_task_inference_transitions(
+                inference_steps=self.z_inference_steps
+            )
+
+        for i in tqdm(range(start_step, self.learning_steps + 1)):
+
+            batch = replay_buffer.sample(batch_size)
+            task_zs = z_sampler.sample(tasks_per_batch)
+            zs = task_zs.repeat_interleave(transitions_per_task, dim=0)
+            train_metrics = agent.update_actor(
+                observation=batch.observations, z=zs, step=i
+            )
+
+            eval_metrics = {}
+            if i % self.eval_frequency == 0:
+                eval_metrics = self.eval(agent=agent, tasks=tasks)
+                self._maybe_plot_point_mass_trajectories(
+                    agent=agent,
+                    tasks=tasks,
+                    step=i,
+                    run_name=model_path.name,
+                    wandb_run=run,
+                )
+
+                if self.save_every and i % self.SAVE_EVERY_INTERVAL == 0:
+                    checkpoint_dir = model_path / "checkpoints"
+                    agent._name = i  # pylint: disable=protected-access
+                    checkpoint_path = agent.save(checkpoint_dir)
+                    if self.wandb_logging:
+                        run.save(
+                            checkpoint_path.as_posix(), base_path=model_path.as_posix()
+                        )
+
+                if eval_metrics["eval/task_reward_iqm"] > best_mean_task_reward:
+                    logger.info(
+                        f"New max IQM task reward: {best_mean_task_reward:.3f} -> "
+                        f"{eval_metrics['eval/task_reward_iqm']:.3f}."
+                        f" Saving model."
+                    )
+
+                    if best_model_path is not None:
+                        if best_model_path.is_dir():
+                            shutil.rmtree(best_model_path)
+                        else:
+                            best_model_path.unlink(missing_ok=True)
+
+                    agent._name = i  # pylint: disable=protected-access
+                    best_model_path = agent.save(model_path)
+
+                    best_mean_task_reward = eval_metrics["eval/task_reward_iqm"]
+
+                agent.train()
+
+            metrics = {**train_metrics, **eval_metrics}
+
+            if self.wandb_logging and i % self.eval_frequency == 0:
+                _log_wandb(run, metrics, i)
+
+        if self.wandb_logging:
+            run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
+            run.finish()
+
         shutil.rmtree(model_path)
 
     def eval(
