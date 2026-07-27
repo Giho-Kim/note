@@ -11,6 +11,7 @@ trajectory_plots/
 .mypy_cache/
 .ipynb_checkpoints/
 
+checkpoints/
 # Downloaded model checkpoints / eval artifacts
 downloads/
 
