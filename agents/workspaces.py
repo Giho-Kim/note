@@ -21,6 +21,9 @@ from scipy import stats
 
 from rewards import RewardFunctionConstructor
 from custom_dmc_tasks.point_mass_maze import GOALS as point_mass_maze_goals
+from custom_dmc_tasks.point_mass_maze import TASKS as point_mass_maze_targets
+
+point_mass_maze_target_by_task = dict(point_mass_maze_targets)
 
 from metamotivo.agents.tilt import sample_init_indices
 
@@ -387,6 +390,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
         logger.info("Performing eval rollouts.")
         eval_rewards = {}
+        eval_goal_distances = {} if self.domain_name == "point_mass_maze" else None
         agent.eval()
         for _ in tqdm(range(self.eval_rollouts)):
 
@@ -432,6 +436,12 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     eval_rewards[task] = []
                 eval_rewards[task].append(task_rewards)
 
+                if eval_goal_distances is not None:
+                    goal_distance = self.env.physics.mass_to_target_dist(
+                        point_mass_maze_target_by_task[task]
+                    )
+                    eval_goal_distances.setdefault(task, []).append(goal_distance)
+
         # average over rollouts for metrics
         metrics = {}
         mean_task_performance = 0.0
@@ -443,6 +453,17 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
         # log mean task performance
         metrics["eval/task_reward_iqm"] = mean_task_performance / len(tasks)
+
+        if eval_goal_distances is not None:
+            success_radius = 0.1
+            mean_success_rate = 0.0
+            for task, distances in eval_goal_distances.items():
+                distances = np.asarray(distances, dtype=np.float32)
+                task_success_rate = float((distances <= success_radius).mean())
+                metrics[f"eval/{task}/success_rate"] = task_success_rate
+                mean_success_rate += task_success_rate
+            metrics["eval/success_rate"] = mean_success_rate / len(tasks)
+
         eval_parts = [
             f"{key}={value:.4g}"
             for key, value in metrics.items()

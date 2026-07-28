@@ -152,6 +152,14 @@ class FB(AbstractAgent):
         self.std_dev_schedule = std_dev_schedule
         self.tilt = None
         if tilt:
+            # Snapshot/restore RNG state around tilt's own draws so building it
+            # has zero effect on the shared torch/cuda RNG stream -- otherwise
+            # everything sampled downstream (replay buffer, z-inference, ...)
+            # silently depends on whether --tilt was passed.
+            cpu_rng_state = torch.get_rng_state()
+            cuda_rng_state = (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            )
             self.tilt = TiltLatentSelector(
                 z=self.sample_z(size=self.batch_size),
                 beta=tilt_beta,
@@ -159,6 +167,9 @@ class FB(AbstractAgent):
                 candidate_multiplier=tilt_candidate_multiplier,
                 init_geom_ratio=tilt_init_geom_ratio,
             )
+            torch.set_rng_state(cpu_rng_state)
+            if cuda_rng_state is not None:
+                torch.cuda.set_rng_state_all(cuda_rng_state)
 
     def _tilt_temperature(self, step: int) -> float:
         progress = min(max(step, 0) / self._learning_steps, 1.0)

@@ -21,6 +21,7 @@ from agents.gciql.agent import GCIQL
 from agents.sf.agent import SF
 from agents.td_jepa.agent import TDJEPA
 from agents.fb.replay_buffer import FBReplayBuffer
+from metamotivo.agents.tilt import TiltLatentSelector
 from rewards import RewardFunctionConstructor
 from utils import set_seed_everywhere, BASE_DIR
 
@@ -660,6 +661,41 @@ if config["checkpoint_path"] is not None:
     # wandb.init(tags=[agent.name]) on resume -- restore the algorithm name.
     agent._name = config["name"]  # pylint: disable=protected-access
     agent.train()
+
+    # A pickled checkpoint carries whatever tilt state it was saved with --
+    # loading it here overwrites the freshly-constructed `agent` above, so any
+    # --tilt* flags passed to *this* invocation would otherwise be silently
+    # dropped. Re-sync the tilt config and (re)build the selector from the
+    # current CLI args whenever this run asks for tilt.
+    if isinstance(agent, FB) and config["tilt"]:
+        agent._tilting_by_z = config["tilting_by_z"]
+        agent._tilt_ridge_alpha = config["tilt_ridge_alpha"]
+        agent._tilt_ridge_min = config["tilt_ridge_min"]
+        agent._tilt_start_step = config["tilt_start_step"]
+        agent._tilt_goal = config["tilt_goal"]
+        agent._tilt_refresh_interval = max(1, config["tilt_refresh_interval"])
+        agent._tilt_temperature_start = config["tilt_temperature_start"]
+        agent._tilt_temperature_end = config["tilt_temperature_end"]
+        if agent.tilt is None:
+            # Snapshot/restore RNG state around this build so it has zero
+            # effect on the shared torch/cuda RNG stream -- otherwise
+            # workspace.train()'s z-inference sampling right after this would
+            # silently depend on whether --tilt was passed, breaking
+            # tilt on/off as a controlled comparison.
+            cpu_rng_state = torch.get_rng_state()
+            cuda_rng_state = (
+                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+            )
+            agent.tilt = TiltLatentSelector(
+                z=agent.sample_z(size=agent.batch_size),
+                beta=config["tilt_beta"],
+                temperature=config["tilt_temperature"],
+                candidate_multiplier=config["tilt_candidate_multiplier"],
+                init_geom_ratio=config["tilt_init_geom_ratio"],
+            )
+            torch.set_rng_state(cpu_rng_state)
+            if cuda_rng_state is not None:
+                torch.cuda.set_rng_state_all(cuda_rng_state)
 
 workspace = OfflineRLWorkspace(
     reward_constructor=reward_constructor,
