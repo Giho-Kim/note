@@ -46,10 +46,12 @@ class RewardFunctionConstructor:
         self.task_names = task_names
         self.device = device
         self.reward_functions = {}
+        self.distance_functions = {}
         for task in task_names:
-            self.reward_functions[task] = importlib.import_module(
-                f"rewards.{domain_name}.{task}"
-            ).reward_function
+            task_module = importlib.import_module(f"rewards.{domain_name}.{task}")
+            self.reward_functions[task] = task_module.reward_function
+            if hasattr(task_module, "distance_function"):
+                self.distance_functions[task] = task_module.distance_function
 
     @staticmethod
     def _to_scalar_reward(value) -> float:

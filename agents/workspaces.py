@@ -100,6 +100,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         self.rewards_z = None
         self.wandb_logging = wandb_logging
         self.domain_name = reward_constructor.domain_name
+        self.distance_functions = getattr(reward_constructor, "distance_functions", None)
         self.device = device
         self.collection_interval = collection_interval
         self.collection_episodes = collection_episodes
@@ -258,6 +259,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         tasks_per_batch: int,
         transitions_per_task: int,
         start_step: int = 0,
+        novelty_weighted: bool = False,
     ) -> None:
         """
         Actor-only fine-tuning with z drawn from a frozen Basis Trajectory
@@ -306,7 +308,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         for i in tqdm(range(start_step, self.learning_steps + 1)):
 
             batch = replay_buffer.sample(batch_size)
-            task_zs = z_sampler.sample(tasks_per_batch)
+            task_zs = z_sampler.sample(tasks_per_batch, novelty_weighted=novelty_weighted)
             zs = task_zs.repeat_interleave(transitions_per_task, dim=0)
             train_metrics = agent.update_actor(
                 observation=batch.observations, z=zs, step=i
@@ -390,7 +392,10 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
         logger.info("Performing eval rollouts.")
         eval_rewards = {}
-        eval_goal_distances = {} if self.domain_name == "point_mass_maze" else None
+        has_goal_distances = self.domain_name == "point_mass_maze" or bool(
+            self.distance_functions
+        )
+        eval_goal_distances = {} if has_goal_distances else None
         agent.eval()
         for _ in tqdm(range(self.eval_rollouts)):
 
@@ -437,9 +442,12 @@ class OfflineRLWorkspace(AbstractWorkspace):
                 eval_rewards[task].append(task_rewards)
 
                 if eval_goal_distances is not None:
-                    goal_distance = self.env.physics.mass_to_target_dist(
-                        point_mass_maze_target_by_task[task]
-                    )
+                    if self.domain_name == "point_mass_maze":
+                        goal_distance = self.env.physics.mass_to_target_dist(
+                            point_mass_maze_target_by_task[task]
+                        )
+                    else:
+                        goal_distance = self.distance_functions[task](self.env.physics)
                     eval_goal_distances.setdefault(task, []).append(goal_distance)
 
         # average over rollouts for metrics

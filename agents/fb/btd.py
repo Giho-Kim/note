@@ -64,14 +64,26 @@ def _sample_subtrajectory_observations(
     min_len: int,
     max_len: int,
     seed: int,
+    dataset_transitions: int = None,
 ) -> List[torch.Tensor]:
     """Reads raw episodes directly from dataset_path (bypassing the
     flattened/subsampled OfflineReplayBuffer, which discards episode
     boundaries) and samples n_subtrajectories contiguous observation windows,
-    each of random length in [min_len, max_len]."""
+    each of random length in [min_len, max_len].
+
+    If dataset_transitions is given, only the first
+    dataset_transitions // episode_length episodes are considered, so the GMM
+    is built from the same transitions budget as the actor's replay buffer
+    (episode_length taken from the first episode in the file)."""
     rng = np.random.default_rng(seed)
     episodes = dict(np.load(dataset_path, allow_pickle=True))
     episode_list = [episode.item() for episode in episodes.values()]
+
+    if dataset_transitions is not None:
+        episode_length = len(episode_list[0]["observation"])
+        n_episodes = max(1, dataset_transitions // episode_length)
+        episode_list = episode_list[:n_episodes]
+
     episode_lengths = np.array([len(ep["observation"]) for ep in episode_list])
 
     # sample episodes proportional to length so short episodes aren't
@@ -102,6 +114,7 @@ def build_btd_gmm(
     gmm_components: int,
     whitening_ridge: float,
     seed: int,
+    dataset_transitions: int = None,
 ) -> GaussianMixture:
     """Runs the full BTD build step and returns the fitted (frozen) GMM."""
     subtrajectories = _sample_subtrajectory_observations(
@@ -110,6 +123,7 @@ def build_btd_gmm(
         min_len=min_len,
         max_len=max_len,
         seed=seed,
+        dataset_transitions=dataset_transitions,
     )
 
     all_observations = torch.cat(subtrajectories, dim=0)
@@ -146,8 +160,25 @@ class GMMZSampler:
         self.gmm = gmm
         self.z_dimension = z_dimension
         self.device = device
+        # Precomputed once so sample() never has to touch gmm.sample() --
+        # sklearn's GaussianMixture.sample() re-derives its per-component
+        # cholesky factors from precisions_cholesky_ on every call, which at
+        # real z_dimensions (~100) costs ~150ms/call vs ~0.4ms/call here, a
+        # >100x difference that otherwise shows up as run time depending on
+        # whether novelty_weighted happens to be on or off.
+        self._chol = np.stack(
+            [np.linalg.cholesky(cov) for cov in gmm.covariances_]
+        )
+        self._component_probs = gmm.weights_
+        inverse_weights = 1.0 / gmm.weights_
+        self._inverse_component_probs = inverse_weights / inverse_weights.sum()
 
-    def sample(self, size: int) -> torch.Tensor:
-        samples, _ = self.gmm.sample(size)
+    def sample(self, size: int, novelty_weighted: bool = False) -> torch.Tensor:
+        probs = self._inverse_component_probs if novelty_weighted else self._component_probs
+        component_idx = np.random.choice(self.gmm.n_components, size=size, p=probs)
+        noise = np.random.standard_normal((size, self.z_dimension))
+        samples = self.gmm.means_[component_idx] + np.einsum(
+            "nij,nj->ni", self._chol[component_idx], noise
+        )
         z = torch.as_tensor(samples, dtype=torch.float32, device=self.device)
         return math.sqrt(self.z_dimension) * torch.nn.functional.normalize(z, dim=-1)

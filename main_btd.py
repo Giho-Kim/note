@@ -28,6 +28,7 @@ parser.add_argument("--subtraj_min_len", type=int, default=5)
 parser.add_argument("--subtraj_max_len", type=int, default=50)
 parser.add_argument("--gmm_components", type=int, default=20)
 parser.add_argument("--btd_whitening_ridge", type=float, default=1e-6)
+parser.add_argument("--novelty", action="store_true")
 parser.add_argument("--learning_steps", type=int, default=200000)
 parser.add_argument("--tasks_per_batch", type=int, default=32)
 parser.add_argument("--transitions_per_task", type=int, default=64)
@@ -118,6 +119,7 @@ gmm = build_btd_gmm(
     gmm_components=args.gmm_components,
     whitening_ridge=args.btd_whitening_ridge,
     seed=args.seed,
+    dataset_transitions=args.dataset_transitions,
 )
 z_sampler = GMMZSampler(
     gmm=gmm, z_dimension=agent._z_dimension, device=device  # pylint: disable=protected-access
@@ -154,4 +156,5 @@ if __name__ == "__main__":
         tasks_per_batch=args.tasks_per_batch,
         transitions_per_task=args.transitions_per_task,
         start_step=args.resume_step,
+        novelty_weighted=args.novelty,
     )
