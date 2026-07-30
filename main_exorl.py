@@ -68,6 +68,7 @@ parser.add_argument("--z_mix_ratio", type=float)
 parser.add_argument("--verbose", action="store_true")
 parser.add_argument("--save_every", action="store_true")
 parser.add_argument("--checkpoint_path", type=str, default=None)
+parser.add_argument("--actor_learning_rate", type=float, default=None)
 parser.add_argument("--resume_step", type=int, default=0)
 parser.add_argument("--eval_frequency", type=int, default=None)
 args = parser.parse_args()
@@ -139,11 +140,14 @@ tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
 tilt_start_step_override = cli_args.pop("tilt_start_step", None)
 tilt_refresh_interval_override = cli_args.pop("tilt_refresh_interval", None)
 eval_frequency_override = cli_args.pop("eval_frequency", None)
+actor_learning_rate_override = cli_args.pop("actor_learning_rate", None)
 config.update(cli_args)
 if eval_frequency_override is not None:
     if eval_frequency_override <= 0:
         raise ValueError("eval_frequency must be positive.")
     config["eval_frequency"] = eval_frequency_override
+if actor_learning_rate_override is not None:
+    config["actor_learning_rate"] = actor_learning_rate_override
 if tilt_beta_override is not None:
     config["tilt_beta"] = tilt_beta_override
 if tilt_temperature_start_override is not None:

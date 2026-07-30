@@ -6,15 +6,9 @@
   <component name="ChangeListManager">
     <list default="true" id="deb21332-4dff-4ca6-abf5-bb29f93991b1" name="변경" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/agents/fb/btd.py" beforeDir="false" afterPath="$PROJECT_DIR$/agents/fb/btd.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/agents/workspaces.py" beforeDir="false" afterPath="$PROJECT_DIR$/agents/workspaces.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/main_btd.py" beforeDir="false" afterPath="$PROJECT_DIR$/main_btd.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rewards/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/rewards/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rewards/jaco/reach_bottom_left.py" beforeDir="false" afterPath="$PROJECT_DIR$/rewards/jaco/reach_bottom_left.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rewards/jaco/reach_bottom_right.py" beforeDir="false" afterPath="$PROJECT_DIR$/rewards/jaco/reach_bottom_right.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rewards/jaco/reach_top_left.py" beforeDir="false" afterPath="$PROJECT_DIR$/rewards/jaco/reach_top_left.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/rewards/jaco/reach_top_right.py" beforeDir="false" afterPath="$PROJECT_DIR$/rewards/jaco/reach_top_right.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/run.sh" beforeDir="false" afterPath="$PROJECT_DIR$/run.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/run_btd.sh" beforeDir="false" afterPath="$PROJECT_DIR$/run_btd.sh" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/run_btd_jaco.sh" beforeDir="false" afterPath="$PROJECT_DIR$/run_btd_jaco.sh" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -23,6 +17,13 @@
   </component>
   <component name="EmbeddingIndexingInfo">
     <option name="cachedIndexableFilesCount" value="858" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
   </component>
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
@@ -47,10 +48,11 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "SHELLCHECK.PATH": "I do mind",
     "codeWithMe.voiceChat.enabledByDefault": "false",
     "com.google.cloudcode.ide_session_index": "20260511_0001",
     "git-widget-placeholder": "main",
-    "last_opened_file_path": "/home/core/D-LEVER/checkpoints/j",
+    "last_opened_file_path": "/home/core/D-LEVER/checkpoints/jr",
     "node.js.detected.package.eslint": "true",
     "node.js.detected.package.jshint": "true",
     "node.js.detected.package.tslint": "true",
@@ -62,6 +64,8 @@
 }]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/checkpoints/jr" />
+      <recent name="$PROJECT_DIR$" />
       <recent name="$PROJECT_DIR$/checkpoints/j" />
       <recent name="$PROJECT_DIR$/checkpoints" />
     </key>

@@ -29,6 +29,7 @@ parser.add_argument("--subtraj_max_len", type=int, default=50)
 parser.add_argument("--gmm_components", type=int, default=20)
 parser.add_argument("--btd_whitening_ridge", type=float, default=1e-6)
 parser.add_argument("--novelty", action="store_true")
+parser.add_argument("--actor_learning_rate", type=float, default=None)
 parser.add_argument("--learning_steps", type=int, default=200000)
 parser.add_argument("--tasks_per_batch", type=int, default=32)
 parser.add_argument("--transitions_per_task", type=int, default=64)
@@ -76,6 +77,11 @@ agent._device = device  # pylint: disable=protected-access
 # wandb.init(tags=[agent.name, "btd"]) on load -- restore a proper name.
 agent._name = "fb-btd"  # pylint: disable=protected-access
 agent.train()
+
+if args.actor_learning_rate is not None:
+    agent.actor_optimizer = torch.optim.Adam(
+        agent.actor.parameters(), lr=args.actor_learning_rate
+    )
 
 # capture the checkpoint's trained std schedule before eval() ever overwrites
 # agent.std_dev_schedule with eval_std (see OfflineRLWorkspace.eval)
