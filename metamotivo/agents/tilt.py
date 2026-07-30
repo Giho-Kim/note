@@ -39,6 +39,7 @@ def weighted_select(
     temperature: float,
     n: int,
     uniform_mix: float = 0.5,
+    normalize: bool = False,
 ) -> Tuple[torch.Tensor, float, float]:
     """Softmax(candidate_score / temperature) then multinomial-without-
     replacement selection of n indices. Factored out of refresh() so a cached
@@ -46,6 +47,12 @@ def weighted_select(
     (a fresh draw at the current temperature, no new forward passes) instead
     of only ever selecting once right after scoring -- see
     TiltLatentSelector.resample().
+
+    normalize z-scores candidate_score (subtract mean, divide by std) before
+    dividing by temperature, so a fixed temperature keeps the same effective
+    sharpness regardless of upstream feature-scale drift inflating the raw
+    score's spread over training -- otherwise a fixed temperature effectively
+    gets sharper (more collapse-prone) as that spread grows.
 
     uniform_mix blends in a uniform component: prob = uniform_mix/n_total +
     (1-uniform_mix)*softmax. Temperature alone can't guarantee a floor/cap on
@@ -59,6 +66,10 @@ def weighted_select(
     scores)."""
     n_total = candidate_score.shape[0]
     n = min(n, n_total)
+    if normalize:
+        candidate_score = (candidate_score - candidate_score.mean()) / (
+            candidate_score.std() + 1e-8
+        )
     logits = candidate_score / temperature
     logits = logits - logits.max()
     softmax_prob = torch.softmax(logits, dim=0)
@@ -78,6 +89,7 @@ class TiltLatentSelector:
     init_geom_ratio: Optional[float] = None
     states_per_candidate: int = 2
     uniform_mix: float = 0.5
+    normalize: bool = False
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -182,7 +194,7 @@ class TiltLatentSelector:
         self._refresh_count += 1
 
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            candidate_score, self.temperature, n, self.uniform_mix
+            candidate_score, self.temperature, n, self.uniform_mix, self.normalize
         )
         self.z = z_candidates[selected_idx]
         self._candidate_z = z_candidates
@@ -206,7 +218,7 @@ class TiltLatentSelector:
             raise RuntimeError("resample() called before any refresh().")
         n = self.z.shape[0] if n is None else n
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            self._candidate_score, self.temperature, n, self.uniform_mix
+            self._candidate_score, self.temperature, n, self.uniform_mix, self.normalize
         )
         self.z = self._candidate_z[selected_idx]
         return self.z

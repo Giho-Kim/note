@@ -65,6 +65,7 @@ class FB(AbstractAgent):
         name: str,
         tilt_goal: bool = False,
         tilt_refresh_interval: int = 1,
+        tilt_normalize: bool = False,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -166,6 +167,7 @@ class FB(AbstractAgent):
                 temperature=tilt_temperature,
                 candidate_multiplier=tilt_candidate_multiplier,
                 init_geom_ratio=tilt_init_geom_ratio,
+                normalize=tilt_normalize,
             )
             torch.set_rng_state(cpu_rng_state)
             if cuda_rng_state is not None:
@@ -416,7 +418,7 @@ class FB(AbstractAgent):
             if tilt_selection and self.tilt.goal_candidate_z is not None:
                 idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
                     self.tilt.goal_candidate_score, self.tilt.temperature, size,
-                    self.tilt.uniform_mix,
+                    self.tilt.uniform_mix, self.tilt.normalize,
                 )
                 z = self.tilt.goal_candidate_z[idx]
             else:
@@ -463,7 +465,8 @@ class FB(AbstractAgent):
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
                 weighted_select(
-                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix
+                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix,
+                    self.tilt.normalize,
                 )
             )
             self.tilt.goal_candidate_z = z_candidates
