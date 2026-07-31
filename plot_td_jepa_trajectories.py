@@ -153,7 +153,11 @@ def compute_fb_leverage(agent: FB, rollout: dict, z, device: str) -> None:
             action=act,
         )
         features = 0.5 * (target_f1 + target_f2)
-        query = z_tensor if agent._tilting_by_z else features
+        # match agents/fb/agent.py:score_from_features -- the Gram is built from
+        # tilt.normalized_features(features), so an unnormalized raw-feature
+        # query here would be scored against the wrong scale (inflating the
+        # leverage score by ~feature_scale()^2).
+        query = z_tensor if agent._tilting_by_z else agent.tilt.normalized_features(features)
 
         gram = agent.tilt.gram.to(device=query.device, dtype=query.dtype)
         if gram.shape[0] != query.shape[-1]:
@@ -169,7 +173,8 @@ def compute_fb_leverage(agent: FB, rollout: dict, z, device: str) -> None:
         )
         identity = torch.eye(query.shape[-1], device=query.device, dtype=query.dtype)
         ginv = torch.linalg.pinv(gram + lam * identity)
-        scores = torch.sum((query @ ginv) * query, dim=1)
+        # /n_eff matches agents/fb/agent.py:score_from_features.
+        scores = torch.sum((query @ ginv) * query, dim=1) / agent.tilt.n_eff
 
     leverage_scores = scores.detach().cpu().numpy().astype(np.float32)
     rollout["leverage_scores"] = leverage_scores
@@ -205,7 +210,11 @@ def compute_tdjepa_leverage(agent: TDJEPAAgent, rollout: dict, z, device: str) -
             features = target_phi_predictors.mean(dim=0)
         else:
             features = target_phi_predictors
-        query = z_tensor if agent.cfg.train.tilting_by_z else features
+        # match agents/fb/agent.py:score_from_features -- the Gram is built from
+        # tilt.normalized_features(features), so an unnormalized raw-feature
+        # query here would be scored against the wrong scale (inflating the
+        # leverage score by ~feature_scale()^2).
+        query = z_tensor if agent.cfg.train.tilting_by_z else agent.tilt.normalized_features(features)
 
         gram = agent.tilt.gram.to(device=query.device, dtype=query.dtype)
         if gram.shape[0] != query.shape[-1]:
@@ -221,7 +230,8 @@ def compute_tdjepa_leverage(agent: TDJEPAAgent, rollout: dict, z, device: str) -
         )
         identity = torch.eye(query.shape[-1], device=query.device, dtype=query.dtype)
         ginv = torch.linalg.pinv(gram + lam * identity)
-        scores = torch.sum((query @ ginv) * query, dim=1)
+        # /n_eff matches metamotivo/agents/td_jepa/agent.py:score_from_features.
+        scores = torch.sum((query @ ginv) * query, dim=1) / agent.tilt.n_eff
 
     leverage_scores = scores.detach().cpu().numpy().astype(np.float32)
     rollout["leverage_scores"] = leverage_scores

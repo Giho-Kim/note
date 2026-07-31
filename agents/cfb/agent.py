@@ -63,7 +63,6 @@ class CFB(FB):
         tilt_ridge_alpha: float = 0.1,
         tilt_ridge_min: float = 1e-8,
         tilt_refresh_interval: int = 1,
-        tilt_normalize: bool = False,
     ):
         assert vcfb != mcfb
         self.vcfb = vcfb
@@ -119,7 +118,6 @@ class CFB(FB):
             tilt_ridge_alpha=tilt_ridge_alpha,
             tilt_ridge_min=tilt_ridge_min,
             tilt_refresh_interval=tilt_refresh_interval,
-            tilt_normalize=tilt_normalize,
         )
 
         # total_action_samples must be divisible by 4

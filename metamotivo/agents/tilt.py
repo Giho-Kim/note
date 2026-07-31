@@ -39,7 +39,6 @@ def weighted_select(
     temperature: float,
     n: int,
     uniform_mix: float = 0.5,
-    normalize: bool = False,
 ) -> Tuple[torch.Tensor, float, float]:
     """Softmax(candidate_score / temperature) then multinomial-without-
     replacement selection of n indices. Factored out of refresh() so a cached
@@ -48,11 +47,10 @@ def weighted_select(
     of only ever selecting once right after scoring -- see
     TiltLatentSelector.resample().
 
-    normalize z-scores candidate_score (subtract mean, divide by std) before
-    dividing by temperature, so a fixed temperature keeps the same effective
-    sharpness regardless of upstream feature-scale drift inflating the raw
-    score's spread over training -- otherwise a fixed temperature effectively
-    gets sharper (more collapse-prone) as that spread grows.
+    candidate_score is expected to already be the n_eff-normalized leverage
+    score (see TiltLatentSelector.n_eff), i.e. O(1)-scaled, so temperature is
+    interpretable on a fixed scale across training instead of drifting with
+    the raw score's magnitude.
 
     uniform_mix blends in a uniform component: prob = uniform_mix/n_total +
     (1-uniform_mix)*softmax. Temperature alone can't guarantee a floor/cap on
@@ -66,10 +64,6 @@ def weighted_select(
     scores)."""
     n_total = candidate_score.shape[0]
     n = min(n, n_total)
-    if normalize:
-        candidate_score = (candidate_score - candidate_score.mean()) / (
-            candidate_score.std() + 1e-8
-        )
     logits = candidate_score / temperature
     logits = logits - logits.max()
     softmax_prob = torch.softmax(logits, dim=0)
@@ -89,7 +83,6 @@ class TiltLatentSelector:
     init_geom_ratio: Optional[float] = None
     states_per_candidate: int = 2
     uniform_mix: float = 0.5
-    normalize: bool = False
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -119,6 +112,19 @@ class TiltLatentSelector:
         self._candidate_score: Optional[torch.Tensor] = None
         self.goal_candidate_z: Optional[torch.Tensor] = None
         self.goal_candidate_score: Optional[torch.Tensor] = None
+
+    @property
+    def n_eff(self) -> float:
+        """Effective sample size of the Gram's EMA: N_eff = 1/(1-beta).
+
+        gram is an EMA of per-batch *mean* outer products, so it estimates the
+        population second moment rather than a sum over samples. Dividing the
+        raw quadratic form by N_eff reconstructs the finite-sample Gram the EMA
+        stands in for -- x^T G^-1 x / N_eff = x^T (N_eff*G)^-1 x, with
+        N_eff*G ~ sum_i x_i x_i^T over the EMA's effective window -- which puts
+        the leverage score back on the classical "share of the sample" scale
+        (O(1)) instead of a magnitude that depends on beta."""
+        return 1.0 / (1.0 - self.beta)
 
     def feature_scale(self) -> torch.Tensor:
         """Global scale (RMS) applied to forward features before the Gram."""
@@ -194,7 +200,7 @@ class TiltLatentSelector:
         self._refresh_count += 1
 
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            candidate_score, self.temperature, n, self.uniform_mix, self.normalize
+            candidate_score, self.temperature, n, self.uniform_mix
         )
         self.z = z_candidates[selected_idx]
         self._candidate_z = z_candidates
@@ -218,7 +224,7 @@ class TiltLatentSelector:
             raise RuntimeError("resample() called before any refresh().")
         n = self.z.shape[0] if n is None else n
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            self._candidate_score, self.temperature, n, self.uniform_mix, self.normalize
+            self._candidate_score, self.temperature, n, self.uniform_mix
         )
         self.z = self._candidate_z[selected_idx]
         return self.z

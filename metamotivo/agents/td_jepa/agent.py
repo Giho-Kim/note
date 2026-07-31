@@ -53,7 +53,6 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_start_step: int = 0
     tilt_goal: bool = False
     tilt_refresh_interval: int = 1
-    tilt_normalize: bool = False
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -90,7 +89,6 @@ class TDJEPAAgent:
                 temperature=self.cfg.train.tilt_temperature,
                 candidate_multiplier=self.cfg.train.tilt_candidate_multiplier,
                 init_geom_ratio=self.cfg.train.tilt_init_geom_ratio,
-                normalize=self.cfg.train.tilt_normalize,
             )
 
     @property
@@ -287,7 +285,7 @@ class TDJEPAAgent:
             if tilt_selection and self.tilt.goal_candidate_z is not None:
                 idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
                     self.tilt.goal_candidate_score, self.tilt.temperature, size,
-                    self.tilt.uniform_mix, self.tilt.normalize,
+                    self.tilt.uniform_mix,
                 )
                 z = self.tilt.goal_candidate_z[idx]
             else:
@@ -328,8 +326,7 @@ class TDJEPAAgent:
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
                 weighted_select(
-                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix,
-                    self.tilt.normalize,
+                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix
                 )
             )
             self.tilt.goal_candidate_z = z_candidates
@@ -538,7 +535,10 @@ class TDJEPAAgent:
         # consistent.
         query = z if self.cfg.train.tilting_by_z else self.tilt.normalized_features(v_metric)
         qg = query @ ginv
-        return torch.sum(qg * query, dim=1)
+        # /n_eff puts the quadratic form back on the classical finite-sample
+        # leverage scale (see TiltLatentSelector.n_eff) so temperature is
+        # interpretable against an O(1) score instead of a beta-dependent one.
+        return torch.sum(qg * query, dim=1) / self.tilt.n_eff
 
     def score_and_grad(self, phi_obs, z):
         z = z.detach().clone().requires_grad_(True)

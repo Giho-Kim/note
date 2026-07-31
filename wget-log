@@ -1,0 +1,11 @@
+--2026-07-28 18:12:15--  https://dl.fbaipublicfiles.com/exorl/jaco/rnd.zip
+Resolving dl.fbaipublicfiles.com (dl.fbaipublicfiles.com)... 52.85.128.102, 52.85.128.10, 52.85.128.8, ...
+Connecting to dl.fbaipublicfiles.com (dl.fbaipublicfiles.com)|52.85.128.102|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2046145936 (1.9G) [application/zip]
+Saving to: ‘./datasets/jaco/rnd.zip’
+
+rnd.zip                                              0%[                                                                                                                 ]   1.40M  --.-KB/s    eta 3088d  rnd.zip                                              0%[                                                                                                                 ]   1.40M  --.-KB/s    in 2d 5h   
+
+2026-07-30 23:31:57 (7.66 B/s) - Read error at byte 1471060/2046145936 (Connection timed out). Retrying.
+

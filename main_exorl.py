@@ -42,7 +42,6 @@ parser.add_argument("--tilt_ridge_alpha", type=float)
 parser.add_argument("--tilt_ridge_min", type=float)
 parser.add_argument("--tilt_start_step", type=int)
 parser.add_argument("--tilt_refresh_interval", type=int)
-parser.add_argument("--normalize", action="store_true")
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -378,7 +377,6 @@ elif config["algorithm"] == "td_jepa":
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
-        tilt_normalize=config["normalize"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -471,7 +469,6 @@ elif config["algorithm"] == "fb":
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
-        tilt_normalize=config["normalize"],
         device=config["device"],
         name=config["name"],
     )
@@ -547,7 +544,6 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
-        tilt_normalize=config["normalize"],
     )
 
     replay_buffer = FBReplayBuffer(

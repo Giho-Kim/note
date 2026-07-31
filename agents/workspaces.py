@@ -750,6 +750,23 @@ class OfflineRLWorkspace(AbstractWorkspace):
         n_candidates = tilt.candidate_multiplier * z.shape[0]
         prob_uniform = 1.0 / n_candidates
 
+        # --- raw leverage score (x^T (G+lam*I)^-1 x) from the most recent
+        #     refresh()/sample_goal_z_candidates() candidate pool -- this is
+        #     the pre-softmax candidate_score weighted_select consumes,
+        #     already n_eff-normalized (see TiltLatentSelector.n_eff).
+        candidate_score = (
+            tilt.goal_candidate_score
+            if tilt.goal_candidate_score is not None
+            else tilt._candidate_score  # noqa: SLF001  pylint: disable=protected-access
+        )
+        if candidate_score is not None:
+            score_mean = float(candidate_score.mean())
+            score_std = float(candidate_score.std(unbiased=False))
+            score_min = float(candidate_score.min())
+            score_max = float(candidate_score.max())
+        else:
+            score_mean = score_std = score_min = score_max = float("nan")
+
         columns = [
             ("step", f"{step}"),
             ("temp", f"{tilt.temperature:.3f}"),
@@ -765,6 +782,10 @@ class OfflineRLWorkspace(AbstractWorkspace):
             ("p_min", f"{prob_min:.3e}"),
             ("p_max", f"{prob_max:.3e}"),
             ("p_unif", f"{prob_uniform:.3e}"),
+            ("score_mean", f"{score_mean:.3e}"),
+            ("score_std", f"{score_std:.3e}"),
+            ("score_min", f"{score_min:.3e}"),
+            ("score_max", f"{score_max:.3e}"),
         ]
         widths = [max(len(name), len(value)) for name, value in columns]
 

@@ -1,9 +1,31 @@
-export WANDB_PROJECT=hyperparameter
 
-python main_exorl.py fb jaco random --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --dataset_transitions 10000000 --learning_steps 100000 --checkpoint_path checkpoints/jr/42_200000.pickle --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-5 --tilt_start_step 0 --tilt_init_geom_ratio 0.98 --tilt_candidate_multiplier 5 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 0.01 --tilt_beta 0.99 --tilt_refresh_interval 5 --seed 42 --verbose --tilt_goal
-python main_exorl.py fb jaco random --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --dataset_transitions 10000000 --learning_steps 100000 --checkpoint_path checkpoints/jr/44_400000.pickle --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-5 --tilt_start_step 0 --tilt_init_geom_ratio 0.98 --tilt_candidate_multiplier 5 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 0.01 --tilt_beta 0.99 --tilt_refresh_interval 5 --seed 44 --verbose --tilt_goal
+\
 
-#python main_exorl.py fb point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --learning_steps 200000 --checkpoint_path checkpoints/43_20000.pickle --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-5 --tilt_start_step 0 --tilt_init_geom_ratio 0.99 --tilt_candidate_multiplier 5 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 0.01 --tilt_beta 0.99 --tilt_refresh_interval 5 --seed 43 --verbose --tilt_goal
-#python main_exorl.py fb point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right --learning_steps 200000 --checkpoint_path checkpoints/44_580000.pickle --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-5 --tilt_start_step 0 --tilt_init_geom_ratio 0.99 --tilt_candidate_multiplier 5 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 0.01 --tilt_beta 0.99 --tilt_refresh_interval 5 --seed 44 --verbose --tilt_goal
-#python main_exorl.py fb point_mass_maze rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --learning_steps 200000 --checkpoint_path checkpoints/45_400000.pickle --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-5 --tilt_start_step 0 --tilt_init_geom_ratio 0.99 --tilt_candidate_multiplier 5 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 0.01 --tilt_beta 0.99 --tilt_refresh_interval 5 --seed 45 --verbose --tilt_goal
+export WANDB_PROJECT=HYPER
 
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 5 --tilt_temperature_end 5 --tilt_ridge_alpha 1e-2  --seed 42   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 5 --tilt_temperature_end 5 --tilt_ridge_alpha 1e-2  --seed 43   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 5 --tilt_temperature_end 5 --tilt_ridge_alpha 1e-2  --seed 44   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 5 --tilt_temperature_end 5 --tilt_ridge_alpha 1e-2  --seed 45   --tilt_beta 0.99 --normalize
+
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 10 --tilt_temperature_end 10 --tilt_ridge_alpha 1e-2  --seed 42   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 10 --tilt_temperature_end 10 --tilt_ridge_alpha 1e-2  --seed 43   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 10 --tilt_temperature_end 10 --tilt_ridge_alpha 1e-2  --seed 44   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 10 --tilt_temperature_end 10 --tilt_ridge_alpha 1e-2  --seed 45   --tilt_beta 0.99 --normalize
+
+
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2  --seed 42   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2  --seed 43   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2  --seed 44   --tilt_beta 0.99 --normalize
+
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip    --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8 --tilt_start_step 100 --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_temperature_start 20 --tilt_temperature_end 20 --tilt_ridge_alpha 1e-2  --seed 45   --tilt_beta 0.99 --normalize
