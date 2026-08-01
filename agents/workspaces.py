@@ -115,9 +115,15 @@ class OfflineRLWorkspace(AbstractWorkspace):
         agent_config: Dict,
         replay_buffer: Union[OfflineReplayBuffer, FBReplayBuffer],
         start_step: int = 0,
+        extra_checkpoint_dir: Optional[Path] = None,
     ) -> None:
         """
         Trains an offline RL algorithm on one task.
+
+        extra_checkpoint_dir, if given, saves the agent's final (end-of-loop,
+        not just best-eval) state there -- a permanent local copy independent
+        of model_path (which this method always deletes at the end) -- and
+        uploads it to the same wandb run before that run closes.
         """
         run = None
         if self.wandb_logging:
@@ -241,6 +247,17 @@ class OfflineRLWorkspace(AbstractWorkspace):
             ):
                 _log_wandb(run, metrics, i)
 
+        if extra_checkpoint_dir is not None:
+            extra_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            agent._name = "final"  # pylint: disable=protected-access
+            extra_checkpoint_path = agent.save(extra_checkpoint_dir)
+            if self.wandb_logging:
+                run.save(
+                    extra_checkpoint_path.as_posix(),
+                    base_path=extra_checkpoint_dir.as_posix(),
+                )
+            logger.info(f"Saved final agent state to {extra_checkpoint_path}.")
+
         if self.wandb_logging:
             # save to wandb_logging
             run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
@@ -260,13 +277,20 @@ class OfflineRLWorkspace(AbstractWorkspace):
         transitions_per_task: int,
         start_step: int = 0,
         novelty_weighted: bool = False,
+        whitening_matrix: Optional[torch.Tensor] = None,
     ) -> None:
         """
-        Actor-only fine-tuning with z drawn from a frozen Basis Trajectory
-        Distribution (a GMM over subtrajectory feature summaries) instead of
-        Unif(S^{d-1}). F and B are expected to already be frozen by the
-        caller -- this loop never touches them (no update_fb, no target
-        network updates).
+        BTD Phase 2: policy training with z drawn from a frozen Basis
+        Trajectory Distribution (a GMM over subtrajectory feature summaries,
+        built in Phase 1 -- see build_btd_gmm) instead of Unif(S^{d-1}).
+
+        If whitening_matrix is given, F was reinitialized by the caller
+        (agent.reinit_forward_representation) and is retrained here each step
+        via agent.update_critic_btd -- an SF-style Bellman residual against
+        the fixed phi(s) = whitening_matrix @ B(s) reward, with B frozen
+        throughout. If whitening_matrix is None, this falls back to the
+        actor-only fine-tuning used before Phase 2 existed (F/B expected to
+        already be frozen by the caller; no update_fb, no target updates).
         """
         run = None
         if self.wandb_logging:
@@ -308,11 +332,49 @@ class OfflineRLWorkspace(AbstractWorkspace):
         for i in tqdm(range(start_step, self.learning_steps + 1)):
 
             batch = replay_buffer.sample(batch_size)
-            task_zs = z_sampler.sample(tasks_per_batch, novelty_weighted=novelty_weighted)
+
+            if agent.tilt is not None and agent._tilt_active(i):  # noqa: SLF001  pylint: disable=protected-access
+                agent.tilt.temperature = agent._tilt_temperature(i)  # noqa: SLF001  pylint: disable=protected-access
+                if agent._tilt_score_this_step(i):  # noqa: SLF001  pylint: disable=protected-access
+                    _, features = agent.tilt.refresh(
+                        init_features=batch.observations,
+                        init_timesteps=batch.timesteps,
+                        sample_z=lambda size: z_sampler.sample(
+                            size, novelty_weighted=novelty_weighted
+                        ),
+                        score_fn=lambda observations, z_candidates: agent.score_and_features(
+                            observations=observations, z=z_candidates, step=i
+                        ),
+                        score_from_features_fn=agent.score_from_features,
+                        update_gram=False,
+                        return_features=True,
+                        num_samples=tasks_per_batch,
+                    )
+                    agent.tilt.update_gram(((features, 1.0),))
+                else:
+                    agent.tilt.resample(n=tasks_per_batch)
+                task_zs = agent.tilt.z
+            else:
+                task_zs = z_sampler.sample(tasks_per_batch, novelty_weighted=novelty_weighted)
+
             zs = task_zs.repeat_interleave(transitions_per_task, dim=0)
-            train_metrics = agent.update_actor(
+
+            critic_metrics = {}
+            if whitening_matrix is not None:
+                critic_metrics = agent.update_critic_btd(
+                    observations=batch.observations,
+                    actions=batch.actions,
+                    next_observations=batch.next_observations,
+                    discounts=batch.discounts,
+                    zs=zs,
+                    whitening_matrix=whitening_matrix,
+                    step=i,
+                )
+
+            actor_metrics = agent.update_actor(
                 observation=batch.observations, z=zs, step=i
             )
+            train_metrics = {**critic_metrics, **actor_metrics}
 
             eval_metrics = {}
             if i % self.eval_frequency == 0:

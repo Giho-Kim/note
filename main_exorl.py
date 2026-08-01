@@ -42,6 +42,8 @@ parser.add_argument("--tilt_ridge_alpha", type=float)
 parser.add_argument("--tilt_ridge_min", type=float)
 parser.add_argument("--tilt_start_step", type=int)
 parser.add_argument("--tilt_refresh_interval", type=int)
+parser.add_argument("--tilt_uniform_mix", type=float)
+parser.add_argument("--tilt_linear", action="store_true")
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -139,6 +141,7 @@ tilt_ridge_alpha_override = cli_args.pop("tilt_ridge_alpha", None)
 tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
 tilt_start_step_override = cli_args.pop("tilt_start_step", None)
 tilt_refresh_interval_override = cli_args.pop("tilt_refresh_interval", None)
+tilt_uniform_mix_override = cli_args.pop("tilt_uniform_mix", None)
 eval_frequency_override = cli_args.pop("eval_frequency", None)
 actor_learning_rate_override = cli_args.pop("actor_learning_rate", None)
 config.update(cli_args)
@@ -192,6 +195,12 @@ if tilt_refresh_interval_override is not None:
     config["tilt_refresh_interval"] = tilt_refresh_interval_override
 if "tilt_refresh_interval" not in config:
     config["tilt_refresh_interval"] = 1
+if tilt_uniform_mix_override is not None:
+    config["tilt_uniform_mix"] = tilt_uniform_mix_override
+if "tilt_uniform_mix" not in config:
+    config["tilt_uniform_mix"] = 0.5
+if "tilt_linear" not in config:
+    config["tilt_linear"] = False
 
 config["device"] = torch.device(
     "cuda"
@@ -377,6 +386,8 @@ elif config["algorithm"] == "td_jepa":
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
+        tilt_uniform_mix=config["tilt_uniform_mix"],
+        tilt_linear=config["tilt_linear"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -469,6 +480,8 @@ elif config["algorithm"] == "fb":
         tilt_start_step=config["tilt_start_step"],
         tilt_goal=config["tilt_goal"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
+        tilt_uniform_mix=config["tilt_uniform_mix"],
+        tilt_linear=config["tilt_linear"],
         device=config["device"],
         name=config["name"],
     )
@@ -544,6 +557,8 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         tilt_ridge_min=config["tilt_ridge_min"],
         tilt_start_step=config["tilt_start_step"],
         tilt_refresh_interval=config["tilt_refresh_interval"],
+        tilt_uniform_mix=config["tilt_uniform_mix"],
+        tilt_linear=config["tilt_linear"],
     )
 
     replay_buffer = FBReplayBuffer(
@@ -681,6 +696,9 @@ if config["checkpoint_path"] is not None:
         agent._tilt_refresh_interval = max(1, config["tilt_refresh_interval"])
         agent._tilt_temperature_start = config["tilt_temperature_start"]
         agent._tilt_temperature_end = config["tilt_temperature_end"]
+        if agent.tilt is not None:
+            agent.tilt.uniform_mix = config["tilt_uniform_mix"]
+            agent.tilt.linear = config["tilt_linear"]
         if agent.tilt is None:
             # Snapshot/restore RNG state around this build so it has zero
             # effect on the shared torch/cuda RNG stream -- otherwise
@@ -697,6 +715,8 @@ if config["checkpoint_path"] is not None:
                 temperature=config["tilt_temperature"],
                 candidate_multiplier=config["tilt_candidate_multiplier"],
                 init_geom_ratio=config["tilt_init_geom_ratio"],
+                uniform_mix=config["tilt_uniform_mix"],
+                linear=config["tilt_linear"],
             )
             torch.set_rng_state(cpu_rng_state)
             if cuda_rng_state is not None:

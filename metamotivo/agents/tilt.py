@@ -39,35 +39,45 @@ def weighted_select(
     temperature: float,
     n: int,
     uniform_mix: float = 0.5,
+    linear: bool = False,
 ) -> Tuple[torch.Tensor, float, float]:
-    """Softmax(candidate_score / temperature) then multinomial-without-
-    replacement selection of n indices. Factored out of refresh() so a cached
+    """Selects n indices (without replacement) weighted by candidate_score,
+    then blends in a uniform floor. Factored out of refresh() so a cached
     candidate pool's scores can be cheaply RE-selected from on later calls
-    (a fresh draw at the current temperature, no new forward passes) instead
-    of only ever selecting once right after scoring -- see
-    TiltLatentSelector.resample().
+    (a fresh draw, no new forward passes) instead of only ever selecting once
+    right after scoring -- see TiltLatentSelector.resample().
 
-    candidate_score is expected to already be the n_eff-normalized leverage
-    score (see TiltLatentSelector.n_eff), i.e. O(1)-scaled, so temperature is
-    interpretable on a fixed scale across training instead of drifting with
-    the raw score's magnitude.
+    Two weighting schemes:
+      linear=False (default): softmax(candidate_score / temperature) --
+        candidate_score is expected to already be the n_eff-normalized
+        leverage score (see TiltLatentSelector.n_eff), i.e. O(1)-scaled, so
+        temperature is interpretable on a fixed scale across training
+        instead of drifting with the raw score's magnitude.
+      linear=True: classical leverage sampling, p_i directly proportional to
+        candidate_score (candidate_score / candidate_score.sum()) -- no
+        temperature knob. Requires candidate_score >= 0 elementwise (true for
+        the leverage scores this is used with, a PSD quadratic form).
+        temperature is ignored in this mode.
 
     uniform_mix blends in a uniform component: prob = uniform_mix/n_total +
-    (1-uniform_mix)*softmax. Temperature alone can't guarantee a floor/cap on
-    selection probability -- if candidate_score's own spread drifts (e.g. from
-    upstream feature-scale drift), even a large fixed temperature can still
-    end up fully collapsed onto one candidate (softmax_i -> 1). The uniform
-    mix caps this structurally regardless of how extreme the scores get:
-    p_i >= uniform_mix/n_total (no candidate fully starved) and
+    (1-uniform_mix)*weighted_prob. Neither scheme alone can guarantee a
+    floor/cap on selection probability -- if candidate_score's own spread
+    drifts (e.g. from upstream feature-scale drift), even a large fixed
+    temperature can still end up fully collapsed onto one candidate. The
+    uniform mix caps this structurally regardless of how extreme the scores
+    get: p_i >= uniform_mix/n_total (no candidate fully starved) and
     p_i <= uniform_mix/n_total + (1-uniform_mix) (no candidate can take more
     than (1-uniform_mix) of the selection mass, however degenerate the
     scores)."""
     n_total = candidate_score.shape[0]
     n = min(n, n_total)
-    logits = candidate_score / temperature
-    logits = logits - logits.max()
-    softmax_prob = torch.softmax(logits, dim=0)
-    prob = uniform_mix / n_total + (1 - uniform_mix) * softmax_prob
+    if linear:
+        weighted_prob = candidate_score / candidate_score.sum()
+    else:
+        logits = candidate_score / temperature
+        logits = logits - logits.max()
+        weighted_prob = torch.softmax(logits, dim=0)
+    prob = uniform_mix / n_total + (1 - uniform_mix) * weighted_prob
     idx = torch.multinomial(prob, num_samples=n, replacement=False)
     return idx, float(prob.min()), float(prob.max())
 
@@ -83,6 +93,7 @@ class TiltLatentSelector:
     init_geom_ratio: Optional[float] = None
     states_per_candidate: int = 2
     uniform_mix: float = 0.5
+    linear: bool = False
 
     def __post_init__(self) -> None:
         dim = self.z.shape[-1]
@@ -200,7 +211,7 @@ class TiltLatentSelector:
         self._refresh_count += 1
 
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            candidate_score, self.temperature, n, self.uniform_mix
+            candidate_score, self.temperature, n, self.uniform_mix, self.linear
         )
         self.z = z_candidates[selected_idx]
         self._candidate_z = z_candidates
@@ -224,7 +235,7 @@ class TiltLatentSelector:
             raise RuntimeError("resample() called before any refresh().")
         n = self.z.shape[0] if n is None else n
         selected_idx, self.last_prob_min, self.last_prob_max = weighted_select(
-            self._candidate_score, self.temperature, n, self.uniform_mix
+            self._candidate_score, self.temperature, n, self.uniform_mix, self.linear
         )
         self.z = self._candidate_z[selected_idx]
         return self.z

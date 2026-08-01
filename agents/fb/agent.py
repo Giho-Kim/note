@@ -65,6 +65,8 @@ class FB(AbstractAgent):
         name: str,
         tilt_goal: bool = False,
         tilt_refresh_interval: int = 1,
+        tilt_uniform_mix: float = 0.5,
+        tilt_linear: bool = False,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -141,6 +143,56 @@ class FB(AbstractAgent):
         self._tau = tau
         self._z_dimension = z_dimension
         self._learning_steps = max(1, learning_steps)
+        self.std_dev_schedule = std_dev_schedule
+        self.tilt = None
+        if tilt:
+            self.enable_tilt(
+                tilt_beta=tilt_beta,
+                tilt_temperature=tilt_temperature,
+                tilt_temperature_start=tilt_temperature_start,
+                tilt_temperature_end=tilt_temperature_end,
+                tilt_candidate_multiplier=tilt_candidate_multiplier,
+                tilt_init_geom_ratio=tilt_init_geom_ratio,
+                tilt_ridge_alpha=tilt_ridge_alpha,
+                tilt_ridge_min=tilt_ridge_min,
+                tilt_start_step=tilt_start_step,
+                tilting_by_z=tilting_by_z,
+                tilt_goal=tilt_goal,
+                tilt_refresh_interval=tilt_refresh_interval,
+                tilt_uniform_mix=tilt_uniform_mix,
+                tilt_linear=tilt_linear,
+            )
+        else:
+            self._tilt_temperature_start = tilt_temperature_start
+            self._tilt_temperature_end = tilt_temperature_end
+            self._tilting_by_z = tilting_by_z
+            self._tilt_ridge_alpha = tilt_ridge_alpha
+            self._tilt_ridge_min = tilt_ridge_min
+            self._tilt_start_step = tilt_start_step
+            self._tilt_goal = tilt_goal
+            self._tilt_refresh_interval = max(1, tilt_refresh_interval)
+
+    def enable_tilt(
+        self,
+        tilt_beta: float,
+        tilt_temperature: float,
+        tilt_temperature_start: float,
+        tilt_temperature_end: float,
+        tilt_candidate_multiplier: int,
+        tilt_init_geom_ratio: Optional[float],
+        tilt_ridge_alpha: float,
+        tilt_ridge_min: float,
+        tilt_start_step: int = 0,
+        tilting_by_z: bool = False,
+        tilt_goal: bool = False,
+        tilt_refresh_interval: int = 1,
+        tilt_uniform_mix: float = 0.5,
+        tilt_linear: bool = False,
+    ) -> None:
+        """(Re)builds self.tilt from scratch. Safe to call after __init__ (e.g.
+        BTD Phase 2, where tilt should score candidates against the
+        reinitialized/retrained F rather than Phase 1's) -- previous tilt
+        state (Gram, feat_ms, cached candidate pool) is discarded."""
         self._tilt_temperature_start = tilt_temperature_start
         self._tilt_temperature_end = tilt_temperature_end
         self._tilting_by_z = tilting_by_z
@@ -149,27 +201,27 @@ class FB(AbstractAgent):
         self._tilt_start_step = tilt_start_step
         self._tilt_goal = tilt_goal
         self._tilt_refresh_interval = max(1, tilt_refresh_interval)
-        self.std_dev_schedule = std_dev_schedule
-        self.tilt = None
-        if tilt:
-            # Snapshot/restore RNG state around tilt's own draws so building it
-            # has zero effect on the shared torch/cuda RNG stream -- otherwise
-            # everything sampled downstream (replay buffer, z-inference, ...)
-            # silently depends on whether --tilt was passed.
-            cpu_rng_state = torch.get_rng_state()
-            cuda_rng_state = (
-                torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
-            )
-            self.tilt = TiltLatentSelector(
-                z=self.sample_z(size=self.batch_size),
-                beta=tilt_beta,
-                temperature=tilt_temperature,
-                candidate_multiplier=tilt_candidate_multiplier,
-                init_geom_ratio=tilt_init_geom_ratio,
-            )
-            torch.set_rng_state(cpu_rng_state)
-            if cuda_rng_state is not None:
-                torch.cuda.set_rng_state_all(cuda_rng_state)
+
+        # Snapshot/restore RNG state around tilt's own draws so building it
+        # has zero effect on the shared torch/cuda RNG stream -- otherwise
+        # everything sampled downstream (replay buffer, z-inference, ...)
+        # silently depends on whether tilt is enabled.
+        cpu_rng_state = torch.get_rng_state()
+        cuda_rng_state = (
+            torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None
+        )
+        self.tilt = TiltLatentSelector(
+            z=self.sample_z(size=self.batch_size),
+            beta=tilt_beta,
+            temperature=tilt_temperature,
+            candidate_multiplier=tilt_candidate_multiplier,
+            init_geom_ratio=tilt_init_geom_ratio,
+            uniform_mix=tilt_uniform_mix,
+            linear=tilt_linear,
+        )
+        torch.set_rng_state(cpu_rng_state)
+        if cuda_rng_state is not None:
+            torch.cuda.set_rng_state_all(cuda_rng_state)
 
     def _tilt_temperature(self, step: int) -> float:
         progress = min(max(step, 0) / self._learning_steps, 1.0)
@@ -416,7 +468,7 @@ class FB(AbstractAgent):
             if tilt_selection and self.tilt.goal_candidate_z is not None:
                 idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
                     self.tilt.goal_candidate_score, self.tilt.temperature, size,
-                    self.tilt.uniform_mix,
+                    self.tilt.uniform_mix, self.tilt.linear,
                 )
                 z = self.tilt.goal_candidate_z[idx]
             else:
@@ -463,7 +515,8 @@ class FB(AbstractAgent):
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
                 weighted_select(
-                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix
+                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix,
+                    self.tilt.linear,
                 )
             )
             self.tilt.goal_candidate_z = z_candidates
@@ -671,6 +724,79 @@ class FB(AbstractAgent):
 
         return total_loss, metrics, \
                F1, F2, B_next, M1_next, M2_next, target_B, off_diagonal, actor_std_dev
+
+    def reinit_forward_representation(self, learning_rate: float) -> None:
+        """BTD Phase 2 setup: discards the Phase-1 F (trained jointly with B
+        via the FB objective) and reinitializes it from scratch, along with a
+        fresh optimizer. B (and its target) are left untouched and stay
+        frozen -- only F is retrained, against the fixed phi(s) = whitening
+        @ B(s) computed at the end of Phase 1 (see build_btd_gmm)."""
+        for module in (self.FB.forward_representation, self.FB.forward_representation_target):
+            for submodule in module.modules():
+                if hasattr(submodule, "reset_parameters"):
+                    submodule.reset_parameters()
+        self.FB.forward_representation_target.load_state_dict(
+            self.FB.forward_representation.state_dict()
+        )
+        self.forward_optimizer = torch.optim.Adam(
+            self.FB.forward_representation.parameters(), lr=learning_rate
+        )
+
+    def update_critic_btd(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+        next_observations: torch.Tensor,
+        discounts: torch.Tensor,
+        zs: torch.Tensor,
+        whitening_matrix: torch.Tensor,
+        step: int,
+    ) -> Dict[str, float]:
+        """BTD Phase 2 critic update: an SF-style Bellman residual on F alone,
+        bootstrapped off the fixed phi(s) reward instead of a Bellman update
+        on the full successor measure against B (Phase 1's fb_loss). Only F
+        (reinitialized by reinit_forward_representation) gets gradients here
+        -- B stays frozen throughout, used only to compute phi(s)."""
+        with torch.no_grad():
+            phi_st = self.FB.backward_representation(observations) @ whitening_matrix.T
+            phi_dot_z = torch.einsum("sd, sd -> s", phi_st, zs)
+
+            actor_std_dev = schedule(self.std_dev_schedule, step)
+            next_actions, _ = self.actor(next_observations, zs, actor_std_dev, sample=True)
+            target_F1, target_F2 = self.FB.forward_representation_target(
+                observation=next_observations, z=zs, action=next_actions
+            )
+            target_Q1 = torch.einsum("sd, sd -> s", target_F1, zs)
+            target_Q2 = torch.einsum("sd, sd -> s", target_F2, zs)
+            target_Q = torch.min(target_Q1, target_Q2)
+            target = phi_dot_z + discounts.squeeze(-1) * target_Q
+
+        F1, F2 = self.FB.forward_representation(
+            observation=observations, z=zs, action=actions
+        )
+        Q1 = torch.einsum("sd, sd -> s", F1, zs)
+        Q2 = torch.einsum("sd, sd -> s", F2, zs)
+        critic_loss = 0.5 * ((Q1 - target).pow(2).mean() + (Q2 - target).pow(2).mean())
+
+        self.forward_optimizer.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        for param in self.FB.forward_representation.parameters():
+            if param.grad is not None:
+                param.grad.data.clamp_(-1, 1)
+        self.forward_optimizer.step()
+
+        self.soft_update_params(
+            network=self.FB.forward_representation,
+            target_network=self.FB.forward_representation_target,
+            tau=self._tau,
+        )
+
+        return {
+            "train/btd_critic_loss": critic_loss,
+            "train/btd_phi_dot_z": phi_dot_z.mean().item(),
+            "train/btd_target_Q": target_Q.mean().item(),
+            "train/btd_Q": Q1.mean().item(),
+        }
 
     def update_actor(
         self, observation: torch.Tensor, z: torch.Tensor, step: int

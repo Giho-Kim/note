@@ -53,6 +53,8 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_start_step: int = 0
     tilt_goal: bool = False
     tilt_refresh_interval: int = 1
+    tilt_uniform_mix: float = 0.5
+    tilt_linear: bool = False
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -89,6 +91,8 @@ class TDJEPAAgent:
                 temperature=self.cfg.train.tilt_temperature,
                 candidate_multiplier=self.cfg.train.tilt_candidate_multiplier,
                 init_geom_ratio=self.cfg.train.tilt_init_geom_ratio,
+                uniform_mix=self.cfg.train.tilt_uniform_mix,
+                linear=self.cfg.train.tilt_linear,
             )
 
     @property
@@ -285,7 +289,7 @@ class TDJEPAAgent:
             if tilt_selection and self.tilt.goal_candidate_z is not None:
                 idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
                     self.tilt.goal_candidate_score, self.tilt.temperature, size,
-                    self.tilt.uniform_mix,
+                    self.tilt.uniform_mix, self.tilt.linear,
                 )
                 z = self.tilt.goal_candidate_z[idx]
             else:
@@ -326,7 +330,8 @@ class TDJEPAAgent:
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
                 weighted_select(
-                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix
+                    candidate_score, self.tilt.temperature, size, self.tilt.uniform_mix,
+                    self.tilt.linear,
                 )
             )
             self.tilt.goal_candidate_z = z_candidates

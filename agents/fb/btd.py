@@ -15,7 +15,7 @@ actor-only fine-tuning (see OfflineRLWorkspace.train_btd).
 
 import math
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import torch
@@ -115,8 +115,11 @@ def build_btd_gmm(
     whitening_ridge: float,
     seed: int,
     dataset_transitions: int = None,
-) -> GaussianMixture:
-    """Runs the full BTD build step and returns the fitted (frozen) GMM."""
+) -> Tuple[GaussianMixture, torch.Tensor]:
+    """Runs the full BTD build step (Phase 1's phi(s) fit + GMM fit) and
+    returns the fitted (frozen) GMM together with the whitening matrix that
+    defines phi(s) = whitening_matrix @ B(s) -- the same fixed phi used by
+    Phase 2's critic retraining (see FB.update_critic_btd)."""
     subtrajectories = _sample_subtrajectory_observations(
         dataset_path=dataset_path,
         n_subtrajectories=n_subtrajectories,
@@ -148,7 +151,7 @@ def build_btd_gmm(
     z_taus = np.stack(z_taus, axis=0)
     gmm = GaussianMixture(n_components=gmm_components, random_state=seed)
     gmm.fit(z_taus)
-    return gmm
+    return gmm, whitening_matrix
 
 
 class GMMZSampler:
