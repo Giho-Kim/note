@@ -825,9 +825,9 @@ class FB(AbstractAgent):
 
         self.forward_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()
-        for param in self.FB.forward_representation.parameters():
-            if param.grad is not None:
-                param.grad.data.clamp_(-1, 1)
+        torch.nn.utils.clip_grad_norm_(
+            self.FB.forward_representation.parameters(), max_norm=1.0
+        )
         self.forward_optimizer.step()
 
         if update_target:
