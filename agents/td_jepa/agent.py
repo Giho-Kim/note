@@ -251,6 +251,64 @@ class TDJEPA(AbstractAgent):
     def sample_z(self, size: int) -> torch.Tensor:
         return self.agent._model.sample_z(size=size, device=self.device)
 
+    @torch.no_grad()
+    def sample_goal_z(self, train_goal: torch.Tensor, size: int) -> torch.Tensor:
+        """Sample goal-conditioned z's exactly as in main_exorl training."""
+        goal_idx = torch.randint(
+            0, train_goal.shape[0], (size,), device=train_goal.device
+        )
+        model = self.agent._model
+        goal_observations = model._augmentator(  # pylint: disable=protected-access
+            model._normalize(train_goal[goal_idx])  # pylint: disable=protected-access
+        )
+        goal_features = (
+            model._phi_rgb_encoder(goal_observations)  # pylint: disable=protected-access
+            if model.cfg.symmetric
+            else model._psi_rgb_encoder(goal_observations)  # pylint: disable=protected-access
+        )
+        return self.agent.project_train_goals(goal_features)
+
+    @torch.no_grad()
+    def sample_goal_z_candidates(
+        self,
+        train_goal: torch.Tensor,
+        init_observations: torch.Tensor,
+        init_timesteps: torch.Tensor,
+        size: int,
+        step: int,
+        tilt_selection: bool,
+        return_features: bool = False,
+        score: bool = True,
+    ):
+        """TD-JEPA adapter for main_exorl-style tilted goal candidates."""
+        del step
+        if init_timesteps is None:
+            raise ValueError("TD-JEPA goal tilt requires init_timesteps.")
+        model = self.agent._model
+        goal_observations = model._augmentator(  # pylint: disable=protected-access
+            model._normalize(train_goal)  # pylint: disable=protected-access
+        )
+        init_observations = model._augmentator(  # pylint: disable=protected-access
+            model._normalize(init_observations)  # pylint: disable=protected-access
+        )
+        goal_features = (
+            model._phi_rgb_encoder(goal_observations)  # pylint: disable=protected-access
+            if model.cfg.symmetric
+            else model._psi_rgb_encoder(goal_observations)  # pylint: disable=protected-access
+        )
+        init_features = model._phi_rgb_encoder(  # pylint: disable=protected-access
+            init_observations
+        )
+        return self.agent.sample_goal_z_candidates(
+            train_goal=goal_features,
+            init_features=init_features,
+            init_timesteps=init_timesteps,
+            size=size,
+            tilt_selection=tilt_selection,
+            return_features=return_features,
+            score=score,
+        )
+
     def infer_z(
         self, observations: torch.Tensor, rewards: Optional[torch.Tensor] = None
     ) -> np.ndarray:
@@ -287,6 +345,10 @@ class TDJEPA(AbstractAgent):
     def tilt(self, value) -> None:
         self.agent.tilt = value
 
+    @property
+    def tilt_goal(self) -> bool:
+        return self.agent.cfg.train.tilt_goal
+
     def _tilt_active(self, step: Optional[int]) -> bool:
         return self.agent._tilt_active(step)  # pylint: disable=protected-access
 
@@ -302,17 +364,26 @@ class TDJEPA(AbstractAgent):
     def enable_tilt(self, **kwargs) -> None:
         self.agent.enable_tilt(**kwargs)
 
-    def reinit_forward_representation(self, learning_rate: float, actor_learning_rate: float = None) -> None:
-        """BTD Phase 2: discards phi (F's role) + actor, reinitializes with
-        fresh optimizers at `learning_rate` (phi/predictor) and
-        `actor_learning_rate` (defaults to `learning_rate` if not given,
-        mirroring FB.reinit_forward_representation). psi (B's role) is
-        untouched -- the caller freezes it afterwards, matching FB's
-        main_btd.py flow."""
+    def reinit_forward_representation(
+        self,
+        learning_rate: float,
+        actor_learning_rate: float = None,
+        reinitialize_forward: bool = True,
+        reinitialize_actor: bool = True,
+    ) -> None:
+        """Prepare phi (F's role) and the actor for BTD Phase 2.
+
+        Their Phase-1 weights can be independently reinitialized or kept;
+        psi (B's role) remains untouched and is frozen by the caller.
+        """
         if actor_learning_rate is None:
             actor_learning_rate = learning_rate
         self.agent.reinit_for_btd_phase2(
-            lr_phi=learning_rate, lr_predictor=learning_rate, lr_actor=actor_learning_rate
+            lr_phi=learning_rate,
+            lr_predictor=learning_rate,
+            lr_actor=actor_learning_rate,
+            reinitialize_forward=reinitialize_forward,
+            reinitialize_actor=reinitialize_actor,
         )
 
     def score_and_features(
@@ -350,7 +421,7 @@ class TDJEPA(AbstractAgent):
         next_observations: torch.Tensor,
         discounts: torch.Tensor,
         zs: torch.Tensor,
-        whitening_matrix: torch.Tensor,
+        whitening_matrix: Optional[torch.Tensor],
         step: int,
     ) -> Dict[str, float]:
         metrics = self.agent.update_critic_btd(

@@ -60,10 +60,10 @@ parser.add_argument("--actor_learning_rate", type=float, default=None)
 parser.add_argument("--tau", type=float, default=None)
 parser.add_argument("--orthonormalisation_coefficient", type=float, default=None)
 parser.add_argument("--discount", type=float, default=0.99)
-# BTD-specific default (0.0 = no goal-conditioned z mixed in, pure sphere
-# sampling during Phase 1) -- main_exorl.py's own default (config.yaml's 0.5)
-# is untouched. fb only (z_mix_ratio); td_jepa's analog is train_goal_ratio,
-# left at its config.yaml default here.
+# BTD-specific default. For FB this also controls Phase 1; in Phase 2 it is
+# shared by FB and TD-JEPA and controls the fraction of goal-conditioned z's.
+# The remaining Phase-2 z's come from the BTD GMM without tilt, or from the
+# same tilted sphere sampling used by main_exorl.py when tilt is active.
 parser.add_argument("--z_mix_ratio", type=float, default=0.0)
 # Phase 1 only builds the representation for build_btd_gmm -- eval there is
 # against tasks meant for the (not-yet-built) Phase 2 policy, so it's wasted
@@ -84,10 +84,36 @@ parser.add_argument("--phase2_learning_steps", type=int, default=1000000)
 parser.add_argument("--tasks_per_batch", type=int, default=32)
 parser.add_argument("--transitions_per_task", type=int, default=64)
 parser.add_argument("--resume_step", type=int, default=0)
+phase2_forward_init_group = parser.add_mutually_exclusive_group()
+phase2_forward_init_group.add_argument(
+    "--reinit_phase2_forward",
+    dest="reinit_phase2_forward",
+    action="store_true",
+    help="Reinitialize F/phi before Phase 2.",
+)
+phase2_forward_init_group.add_argument(
+    "--keep_phase2_forward",
+    dest="reinit_phase2_forward",
+    action="store_false",
+    help="Keep the Phase-1 F/phi weights for Phase 2 (default).",
+)
+phase2_actor_init_group = parser.add_mutually_exclusive_group()
+phase2_actor_init_group.add_argument(
+    "--reinit_phase2_actor",
+    dest="reinit_phase2_actor",
+    action="store_true",
+    help="Reinitialize the actor before Phase 2.",
+)
+phase2_actor_init_group.add_argument(
+    "--keep_phase2_actor",
+    dest="reinit_phase2_actor",
+    action="store_false",
+    help="Keep the Phase-1 actor weights for Phase 2 (default).",
+)
+parser.set_defaults(reinit_phase2_forward=False, reinit_phase2_actor=False)
 
-# --- Phase 2 tilt (leverage-score-weighted selection among the BTD GMM's
-# z candidates, scored against Phase 2's reinitialized/retrained forward-role
-# network -- same CLI surface as main_exorl.py's --tilt) ---
+# --- Phase 2 tilt: the same sphere/goal candidate sampling as main_exorl.py.
+# The BTD GMM remains the non-goal source only while tilt is inactive. ---
 parser.add_argument("--tilt", action="store_true")
 parser.add_argument("--tilt_goal", action="store_true")
 parser.add_argument("--tilting_by_z", action="store_true")
@@ -121,6 +147,9 @@ elif args.wandb_logging == "False":
     args.wandb_logging = False
 else:
     raise ValueError("wandb_logging must be either True or False")
+
+if not 0.0 <= args.z_mix_ratio <= 1.0:
+    raise ValueError("z_mix_ratio must be between 0 and 1.")
 
 device = torch.device(
     "cuda"
@@ -410,12 +439,20 @@ if __name__ == "__main__":
         gmm=gmm, z_dimension=agent._z_dimension, device=device  # pylint: disable=protected-access
     )
 
-    # --- Phase 2 setup: discard Phase 1's forward-role network, reinitialize
-    # it, and freeze the backward-role network (the only one phi_btd(s)
-    # needs) so it's never touched again ---
+    # --- Phase 2 setup: optionally reinitialize the forward-role network and
+    # actor, then freeze the backward-role network (the only one phi_btd(s)
+    # needs) so it is never touched again. Optimizers are recreated even when
+    # weights are kept, so the Phase-2 learning rates always take effect. ---
     agent.reinit_forward_representation(
         learning_rate=args.btd_critic_learning_rate,
         actor_learning_rate=args.actor_learning_rate,
+        reinitialize_forward=args.reinit_phase2_forward,
+        reinitialize_actor=args.reinit_phase2_actor,
+    )
+    print(
+        "Phase 2 initialization: "
+        f"forward={'reinitialized' if args.reinit_phase2_forward else 'kept'}, "
+        f"actor={'reinitialized' if args.reinit_phase2_actor else 'kept'}"
     )
     if args.algorithm == "fb":
         frozen_modules = (agent.FB.backward_representation, agent.FB.backward_representation_target)
@@ -497,4 +534,5 @@ if __name__ == "__main__":
         start_step=args.resume_step,
         novelty_weighted=args.novelty,
         whitening_matrix=whitening_matrix,
+        z_mix_ratio=args.z_mix_ratio,
     )

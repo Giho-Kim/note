@@ -358,6 +358,10 @@ class FB(AbstractAgent):
     def _tilt_active(self, step: int) -> bool:
         return self.tilt is not None and step >= self._tilt_start_step
 
+    @property
+    def tilt_goal(self) -> bool:
+        return self._tilt_goal
+
     def _tilt_score_this_step(self, step: int) -> bool:
         """Whether this step pays for the full oversampled-candidate leverage
         scoring (score_and_features + score_from_features, the ~85% of tilt's
@@ -725,24 +729,40 @@ class FB(AbstractAgent):
         return total_loss, metrics, \
                F1, F2, B_next, M1_next, M2_next, target_B, off_diagonal, actor_std_dev
 
-    def reinit_forward_representation(self, learning_rate: float, actor_learning_rate: float = None) -> None:
-        """BTD Phase 2 setup: discards the Phase-1 F (trained jointly with B
-        via the FB objective) and the actor, reinitializing both from scratch
-        with fresh optimizers -- mirrors TD-JEPA's reinit_for_btd_phase2,
-        which also discards its phi side and actor. B (and its target) are
-        left untouched and stay frozen -- only F and the actor are retrained,
-        against the fixed phi(s) = whitening @ B(s) computed at the end of
-        Phase 1 (see build_btd_gmm). actor_learning_rate defaults to
-        `learning_rate` (the critic/F learning rate) if not given."""
+    def reinit_forward_representation(
+        self,
+        learning_rate: float,
+        actor_learning_rate: float = None,
+        reinitialize_forward: bool = True,
+        reinitialize_actor: bool = True,
+    ) -> None:
+        """Prepare F and the actor for BTD Phase 2.
+
+        Their Phase-1 weights can be independently reinitialized or kept. New
+        optimizers are always created so Phase-2 learning rates and optimizer
+        state do not depend on Phase 1. B and its target stay untouched and
+        are frozen by the caller.
+        """
         if actor_learning_rate is None:
             actor_learning_rate = learning_rate
-        for module in (self.FB.forward_representation, self.FB.forward_representation_target, self.actor):
+        modules_to_reset = []
+        if reinitialize_forward:
+            modules_to_reset.extend(
+                (
+                    self.FB.forward_representation,
+                    self.FB.forward_representation_target,
+                )
+            )
+        if reinitialize_actor:
+            modules_to_reset.append(self.actor)
+        for module in modules_to_reset:
             for submodule in module.modules():
                 if hasattr(submodule, "reset_parameters"):
                     submodule.reset_parameters()
-        self.FB.forward_representation_target.load_state_dict(
-            self.FB.forward_representation.state_dict()
-        )
+        if reinitialize_forward:
+            self.FB.forward_representation_target.load_state_dict(
+                self.FB.forward_representation.state_dict()
+            )
         self.forward_optimizer = torch.optim.Adam(
             self.FB.forward_representation.parameters(), lr=learning_rate
         )
@@ -876,6 +896,17 @@ class FB(AbstractAgent):
         z = math.sqrt(self._z_dimension) * gaussian_random_variable
 
         return z
+
+    @torch.no_grad()
+    def sample_goal_z(self, train_goal: torch.Tensor, size: int) -> torch.Tensor:
+        """Sample goal-conditioned z's exactly as in main_exorl training."""
+        goal_idx = torch.randint(
+            0, train_goal.shape[0], (size,), device=train_goal.device
+        )
+        z = self.FB.backward_representation(train_goal[goal_idx])
+        return math.sqrt(self._z_dimension) * torch.nn.functional.normalize(
+            z, dim=1
+        )
 
     def infer_z(
         self, observations: torch.Tensor, rewards: Optional[torch.Tensor] = None

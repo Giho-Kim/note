@@ -306,7 +306,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
     def train_btd(
         self,
-        agent: FB,
+        agent: Union[FB, TDJEPA],
         tasks: List[str],
         agent_config: Dict,
         replay_buffer: FBReplayBuffer,
@@ -316,19 +316,16 @@ class OfflineRLWorkspace(AbstractWorkspace):
         start_step: int = 0,
         novelty_weighted: bool = False,
         whitening_matrix: Optional[torch.Tensor] = None,
+        z_mix_ratio: float = 0.0,
     ) -> None:
         """
-        BTD Phase 2: policy training with z drawn from a frozen Basis
-        Trajectory Distribution (a GMM over subtrajectory feature summaries,
-        built in Phase 1 -- see build_btd_gmm) instead of Unif(S^{d-1}).
+        BTD Phase 2 training with a main_exorl-style goal-z mixture.
 
-        If whitening_matrix is given, F was reinitialized by the caller
-        (agent.reinit_forward_representation) and is retrained here each step
-        via agent.update_critic_btd -- an SF-style Bellman residual against
-        the fixed phi(s) = whitening_matrix @ B(s) reward, with B frozen
-        throughout. If whitening_matrix is None, this falls back to the
-        actor-only fine-tuning used before Phase 2 existed (F/B expected to
-        already be frozen by the caller; no update_fb, no target updates).
+        z_mix_ratio is the fraction of task z's inferred from dataset goal
+        states. Without tilt, the remaining z's come from the frozen BTD GMM.
+        With tilt active, the remaining z's instead come from leverage-selected
+        uniform-sphere candidates, exactly as in main_exorl; tilt never ranks
+        GMM candidates. F/phi and the actor are trained while B/psi stays fixed.
         """
         run = None
         if self.wandb_logging:
@@ -347,7 +344,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
             model_path = self.model_dir / f"local-run-{date}"
             makedirs(str(model_path))
 
-        logger.info(f"BTD actor-only training for {agent.name}.")
+        logger.info(f"BTD critic and actor training for {agent.name}.")
         best_mean_task_reward = -np.inf
         best_model_path = None
         batch_size = tasks_per_batch * transitions_per_task
@@ -371,48 +368,99 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
             batch = replay_buffer.sample(batch_size)
 
-            if agent.tilt is not None and agent._tilt_active(i):  # noqa: SLF001  pylint: disable=protected-access
+            goal_mask = (
+                torch.rand(tasks_per_batch, device=self.device) < z_mix_ratio
+            )
+            sphere_mask = ~goal_mask
+            goal_count = int(goal_mask.sum().item())
+            sphere_count = tasks_per_batch - goal_count
+            goal_fraction = goal_count / tasks_per_batch
+            task_zs = torch.empty(
+                (tasks_per_batch, agent._z_dimension),  # pylint: disable=protected-access
+                dtype=torch.float32,
+                device=self.device,
+            )
+            sphere_features = None
+            goal_features = None
+            goal_observations = (
+                batch.next_observations
+                if isinstance(agent, TDJEPA)
+                else batch.observations
+            )
+            tilt_active = agent.tilt is not None and agent._tilt_active(i)  # noqa: SLF001  pylint: disable=protected-access
+
+            if tilt_active:
                 agent.tilt.temperature = agent._tilt_temperature(i)  # noqa: SLF001  pylint: disable=protected-access
-                if agent._tilt_score_this_step(i):  # noqa: SLF001  pylint: disable=protected-access
+            score_this_step = tilt_active and agent._tilt_score_this_step(i)  # noqa: SLF001  pylint: disable=protected-access
+
+            if sphere_count > 0:
+                if tilt_active and score_this_step:
                     _, features = agent.tilt.refresh(
                         init_features=batch.observations,
                         init_timesteps=batch.timesteps,
-                        sample_z=lambda size: z_sampler.sample(
-                            size, novelty_weighted=novelty_weighted
-                        ),
+                        sample_z=agent.sample_z,
                         score_fn=lambda observations, z_candidates: agent.score_and_features(
                             observations=observations, z=z_candidates, step=i
                         ),
                         score_from_features_fn=agent.score_from_features,
                         update_gram=False,
                         return_features=True,
-                        num_samples=tasks_per_batch,
+                        num_samples=sphere_count,
                     )
-                    agent.tilt.update_gram(((features, 1.0),))
+                    sphere_features = features
+                    task_zs[sphere_mask] = agent.tilt.z
+                elif tilt_active:
+                    task_zs[sphere_mask] = agent.tilt.resample(n=sphere_count)
                 else:
-                    agent.tilt.resample(n=tasks_per_batch)
-                task_zs = agent.tilt.z
-            else:
-                task_zs = z_sampler.sample(tasks_per_batch, novelty_weighted=novelty_weighted)
+                    task_zs[sphere_mask] = z_sampler.sample(
+                        sphere_count, novelty_weighted=novelty_weighted
+                    )
+
+            if goal_count > 0:
+                if tilt_active:
+                    selected_goal_zs, goal_features = agent.sample_goal_z_candidates(
+                        train_goal=goal_observations,
+                        init_observations=batch.observations,
+                        init_timesteps=batch.timesteps,
+                        size=goal_count,
+                        step=i,
+                        tilt_selection=agent.tilt_goal,
+                        return_features=True,
+                        score=score_this_step,
+                    )
+                    task_zs[goal_mask] = selected_goal_zs
+                else:
+                    task_zs[goal_mask] = agent.sample_goal_z(
+                        train_goal=goal_observations,
+                        size=goal_count,
+                    )
+
+            if sphere_features is not None:
+                gram_batches = [(sphere_features, 1.0 - goal_fraction)]
+                if goal_features is not None:
+                    gram_batches.append((goal_features, goal_fraction))
+                agent.tilt.update_gram(gram_batches)
 
             zs = task_zs.repeat_interleave(transitions_per_task, dim=0)
 
-            critic_metrics = {}
-            if whitening_matrix is not None:
-                critic_metrics = agent.update_critic_btd(
-                    observations=batch.observations,
-                    actions=batch.actions,
-                    next_observations=batch.next_observations,
-                    discounts=batch.discounts,
-                    zs=zs,
-                    whitening_matrix=whitening_matrix,
-                    step=i,
-                )
+            critic_metrics = agent.update_critic_btd(
+                observations=batch.observations,
+                actions=batch.actions,
+                next_observations=batch.next_observations,
+                discounts=batch.discounts,
+                zs=zs,
+                whitening_matrix=whitening_matrix,
+                step=i,
+            )
 
             actor_metrics = agent.update_actor(
                 observation=batch.observations, z=zs, step=i
             )
-            train_metrics = {**critic_metrics, **actor_metrics}
+            train_metrics = {
+                **critic_metrics,
+                **actor_metrics,
+                "train/btd_goal_fraction": goal_fraction,
+            }
 
             eval_metrics = {}
             if i % self.eval_frequency == 0:

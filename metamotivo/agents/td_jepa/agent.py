@@ -786,31 +786,51 @@ class TDJEPAAgent:
             }
         return output_metrics
 
-    def reinit_for_btd_phase2(self, lr_phi: float, lr_predictor: float, lr_actor: float) -> None:
-        """BTD Phase 2 setup: discards Phase-1's phi side (encoder + predictor,
-        playing FB's F role) and the actor, reinitializing them from scratch
-        with fresh optimizers. psi (playing FB's B role) is untouched here --
-        the caller freezes psi's own encoder afterwards, matching FB's
-        main_btd.py flow (agent.reinit_forward_representation(...) then an
-        explicit freeze loop). psi_predictor is not psi(s) itself (psi(s) is
-        just _psi_rgb_encoder + _psi_mlp_encoder) -- it is retrained here too."""
-        reinit_modules = [
-            self._model._phi_rgb_encoder,
-            self._model._phi_mlp_encoder,
-            self._model._phi_predictor,
-            self._model._actor,
-        ]
-        if not self.cfg.model.symmetric:
-            reinit_modules.append(self._model._psi_predictor)
+    def reinit_for_btd_phase2(
+        self,
+        lr_phi: float,
+        lr_predictor: float,
+        lr_actor: float,
+        reinitialize_forward: bool = True,
+        reinitialize_actor: bool = True,
+    ) -> None:
+        """Prepare phi (F's role) and the actor for BTD Phase 2.
+
+        Phase-1 weights can be independently reinitialized or kept. Fresh
+        optimizers are always installed. psi (B's role) remains untouched and
+        is frozen by the caller. The asymmetric psi predictor is grouped with
+        the forward-role reset because Phase 2 does not preserve its Phase-1
+        bidirectional prediction objective.
+        """
+        reinit_modules = []
+        if reinitialize_forward:
+            reinit_modules.extend(
+                (
+                    self._model._phi_rgb_encoder,
+                    self._model._phi_mlp_encoder,
+                    self._model._phi_predictor,
+                )
+            )
+            if not self.cfg.model.symmetric:
+                reinit_modules.append(self._model._psi_predictor)
+        if reinitialize_actor:
+            reinit_modules.append(self._model._actor)
         for module in reinit_modules:
             for submodule in module.modules():
                 if hasattr(submodule, "reset_parameters"):
                     submodule.reset_parameters()
 
-        self._model._target_phi_mlp_encoder.load_state_dict(self._model._phi_mlp_encoder.state_dict())
-        self._model._target_phi_predictor.load_state_dict(self._model._phi_predictor.state_dict())
-        if not self.cfg.model.symmetric:
-            self._model._target_psi_predictor.load_state_dict(self._model._psi_predictor.state_dict())
+        if reinitialize_forward:
+            self._model._target_phi_mlp_encoder.load_state_dict(
+                self._model._phi_mlp_encoder.state_dict()
+            )
+            self._model._target_phi_predictor.load_state_dict(
+                self._model._phi_predictor.state_dict()
+            )
+            if not self.cfg.model.symmetric:
+                self._model._target_psi_predictor.load_state_dict(
+                    self._model._psi_predictor.state_dict()
+                )
 
         self.phi_encoder_optimizer = torch.optim.Adam(
             list(self._model._phi_mlp_encoder.parameters()) + list(self._model._phi_rgb_encoder.parameters()),
@@ -849,7 +869,7 @@ class TDJEPAAgent:
         next_observations: torch.Tensor,
         discounts: torch.Tensor,
         zs: torch.Tensor,
-        whitening_matrix: torch.Tensor,
+        whitening_matrix: Optional[torch.Tensor],
         step: int,
     ) -> Dict[str, torch.Tensor]:
         """BTD Phase 2 critic update: an SF-style Bellman residual on the phi
