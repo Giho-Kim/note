@@ -779,12 +779,16 @@ class FB(AbstractAgent):
         zs: torch.Tensor,
         whitening_matrix: torch.Tensor,
         step: int,
+        update_target: bool = True,
     ) -> Dict[str, float]:
         """BTD Phase 2 critic update: an SF-style Bellman residual on F alone,
         bootstrapped off the fixed phi(s) reward instead of a Bellman update
         on the full successor measure against B (Phase 1's fb_loss). Only F
         (reinitialized by reinit_forward_representation) gets gradients here
-        -- B stays frozen throughout, used only to compute phi(s)."""
+        -- B stays frozen throughout, used only to compute phi(s).
+
+        update_target gates F's target soft-update, kept in lockstep with the
+        actor's delayed update (TD3's policy_freq) by the caller."""
         with torch.no_grad():
             phi_st = self.FB.backward_representation(observations) @ whitening_matrix.T
             phi_dot_z = torch.einsum("sd, sd -> s", phi_st, zs)
@@ -813,11 +817,12 @@ class FB(AbstractAgent):
                 param.grad.data.clamp_(-1, 1)
         self.forward_optimizer.step()
 
-        self.soft_update_params(
-            network=self.FB.forward_representation,
-            target_network=self.FB.forward_representation_target,
-            tau=self._tau,
-        )
+        if update_target:
+            self.soft_update_params(
+                network=self.FB.forward_representation,
+                target_network=self.FB.forward_representation_target,
+                tau=self._tau,
+            )
 
         return {
             "train/btd_critic_loss": critic_loss,

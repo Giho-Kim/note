@@ -72,8 +72,8 @@ parser.add_argument("--phase1_eval", action="store_true")
 
 # --- Phase 1 -> BTD GMM build ---
 parser.add_argument("--n_subtrajectories", type=int, default=10000)
-parser.add_argument("--subtraj_min_len", type=int, default=5)
-parser.add_argument("--subtraj_max_len", type=int, default=50)
+parser.add_argument("--subtraj_min_len", type=int, default=50)
+parser.add_argument("--subtraj_max_len", type=int, default=100)
 parser.add_argument("--gmm_components", type=int, default=20)
 parser.add_argument("--btd_whitening_ridge", type=float, default=1e-6)
 parser.add_argument("--novelty", action="store_true")
@@ -81,6 +81,7 @@ parser.add_argument("--novelty", action="store_true")
 # --- Phase 2 (critic retrain + actor) hyperparameters ---
 parser.add_argument("--btd_critic_learning_rate", type=float, default=1e-4)
 parser.add_argument("--phase2_learning_steps", type=int, default=1000000)
+parser.add_argument("--policy_freq", type=int, default=2)
 parser.add_argument("--tasks_per_batch", type=int, default=32)
 parser.add_argument("--transitions_per_task", type=int, default=64)
 parser.add_argument("--resume_step", type=int, default=0)
@@ -422,6 +423,7 @@ if __name__ == "__main__":
             gmm_components=args.gmm_components,
             whitening_ridge=args.btd_whitening_ridge,
             seed=args.seed,
+            whitening_observations=replay_buffer.storage["observations"],
             dataset_transitions=args.dataset_transitions,
         )
     else:
@@ -535,4 +537,5 @@ if __name__ == "__main__":
         novelty_weighted=args.novelty,
         whitening_matrix=whitening_matrix,
         z_mix_ratio=args.z_mix_ratio,
+        policy_freq=args.policy_freq,
     )

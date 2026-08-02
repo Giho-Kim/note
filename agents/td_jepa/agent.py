@@ -423,6 +423,7 @@ class TDJEPA(AbstractAgent):
         zs: torch.Tensor,
         whitening_matrix: Optional[torch.Tensor],
         step: int,
+        update_target: bool = True,
     ) -> Dict[str, float]:
         metrics = self.agent.update_critic_btd(
             observations=observations,
@@ -432,5 +433,6 @@ class TDJEPA(AbstractAgent):
             zs=zs,
             whitening_matrix=whitening_matrix,
             step=step,
+            update_target=update_target,
         )
         return {key: float(value.detach().cpu()) for key, value in metrics.items()}

@@ -317,6 +317,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         novelty_weighted: bool = False,
         whitening_matrix: Optional[torch.Tensor] = None,
         z_mix_ratio: float = 0.0,
+        policy_freq: int = 2,
     ) -> None:
         """
         BTD Phase 2 training with a main_exorl-style goal-z mixture.
@@ -326,6 +327,10 @@ class OfflineRLWorkspace(AbstractWorkspace):
         With tilt active, the remaining z's instead come from leverage-selected
         uniform-sphere candidates, exactly as in main_exorl; tilt never ranks
         GMM candidates. F/phi and the actor are trained while B/psi stays fixed.
+
+        policy_freq implements TD3's delayed policy update: the critic (F)
+        updates every step, while the actor and F's target network only
+        update every policy_freq steps (default 2, matching Fujimoto et al.).
         """
         run = None
         if self.wandb_logging:
@@ -443,6 +448,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
             zs = task_zs.repeat_interleave(transitions_per_task, dim=0)
 
+            update_target = (i % policy_freq == 0)
+
             critic_metrics = agent.update_critic_btd(
                 observations=batch.observations,
                 actions=batch.actions,
@@ -451,16 +458,16 @@ class OfflineRLWorkspace(AbstractWorkspace):
                 zs=zs,
                 whitening_matrix=whitening_matrix,
                 step=i,
+                update_target=update_target,
             )
 
-            actor_metrics = agent.update_actor(
-                observation=batch.observations, z=zs, step=i
-            )
-            train_metrics = {
-                **critic_metrics,
-                **actor_metrics,
-                "train/btd_goal_fraction": goal_fraction,
-            }
+            train_metrics = {**critic_metrics, "train/btd_goal_fraction": goal_fraction}
+
+            if update_target:
+                actor_metrics = agent.update_actor(
+                    observation=batch.observations, z=zs, step=i
+                )
+                train_metrics.update(actor_metrics)
 
             eval_metrics = {}
             if i % self.eval_frequency == 0:

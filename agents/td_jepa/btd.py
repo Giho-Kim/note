@@ -12,7 +12,7 @@ L2-normalized:
 
     phi_btd(s) = psi(s)                                     (raw psi, unnormalized)
     psi_tau = sum_t discount^t * phi_btd(s_t)               (per subtrajectory)
-    z_tau = psi_tau / ||psi_tau||                            (L2-normalized here)
+    z_tau = sqrt(d) * psi_tau / ||psi_tau||                  (radius sqrt(d))
     GMM.fit({z_tau})
 
 The fitted GMM is then used in place of Unif(S^{d-1}) to sample z for BTD
@@ -21,6 +21,7 @@ GMMZSampler (algorithm-agnostic) and _sample_subtrajectory_observations
 (reads raw episodes off disk, doesn't touch the agent).
 """
 
+import math
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -86,7 +87,9 @@ def build_btd_gmm(
         psi_tau = (discounts.unsqueeze(-1) * phi_tau).sum(dim=0)
         norm = psi_tau.norm()
         if norm > 0:
-            z_taus.append((psi_tau / norm).cpu().numpy())
+            z_taus.append(
+                (math.sqrt(psi_tau.shape[-1]) * psi_tau / norm).cpu().numpy()
+            )
 
     z_taus = np.stack(z_taus, axis=0)
     gmm = GaussianMixture(n_components=gmm_components, random_state=seed)

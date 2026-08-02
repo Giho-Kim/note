@@ -871,6 +871,7 @@ class TDJEPAAgent:
         zs: torch.Tensor,
         whitening_matrix: Optional[torch.Tensor],
         step: int,
+        update_target: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """BTD Phase 2 critic update: an SF-style Bellman residual on the phi
         side alone (encoder + predictor), bootstrapped off the fixed
@@ -912,13 +913,14 @@ class TDJEPAAgent:
         self.phi_encoder_optimizer.step()
         self.phi_predictor_optimizer.step()
 
-        with torch.no_grad():
-            _soft_update_params(
-                self._phi_predictor_paramlist, self._target_phi_predictor_paramlist, self.cfg.train.predictor_target_tau
-            )
-            _soft_update_params(
-                self._phi_mlp_encoder_paramlist, self._target_phi_mlp_encoder_paramlist, self.cfg.train.encoder_target_tau
-            )
+        if update_target:
+            with torch.no_grad():
+                _soft_update_params(
+                    self._phi_predictor_paramlist, self._target_phi_predictor_paramlist, self.cfg.train.predictor_target_tau
+                )
+                _soft_update_params(
+                    self._phi_mlp_encoder_paramlist, self._target_phi_mlp_encoder_paramlist, self.cfg.train.encoder_target_tau
+                )
 
         return {
             "train/btd_critic_loss": critic_loss.detach(),

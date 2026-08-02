@@ -6,7 +6,7 @@ dataset subtrajectories:
 
     phi(s) = (E[B(s)B(s)^T])^{-1} B(s)                 (whitened backward features)
     psi_tau = sum_t discount^t * phi(s_t)               (per subtrajectory)
-    z_tau = psi_tau / ||psi_tau||
+    z_tau = sqrt(d) * psi_tau / ||psi_tau||
     GMM.fit({z_tau})
 
 The fitted GMM is then used in place of Unif(S^{d-1}) to sample z for
@@ -114,12 +114,20 @@ def build_btd_gmm(
     gmm_components: int,
     whitening_ridge: float,
     seed: int,
+    whitening_observations: torch.Tensor,
     dataset_transitions: int = None,
 ) -> Tuple[GaussianMixture, torch.Tensor]:
     """Runs the full BTD build step (Phase 1's phi(s) fit + GMM fit) and
     returns the fitted (frozen) GMM together with the whitening matrix that
     defines phi(s) = whitening_matrix @ B(s) -- the same fixed phi used by
-    Phase 2's critic retraining (see FB.update_critic_btd)."""
+    Phase 2's critic retraining (see FB.update_critic_btd).
+
+    whitening_observations fixes phi's E[B(s)B(s)^T] estimate to Phase 2's own
+    replay buffer (i.e. replay_buffer.storage["observations"], the same
+    dataset_transitions pool the critic trains on) rather than a separate
+    subtrajectory-derived sample -- subtrajectories are still used, but only
+    to build the GMM's z_tau task vectors, which need temporal structure that
+    the (already-flattened) replay buffer doesn't retain."""
     subtrajectories = _sample_subtrajectory_observations(
         dataset_path=dataset_path,
         n_subtrajectories=n_subtrajectories,
@@ -130,7 +138,7 @@ def build_btd_gmm(
     )
 
     all_observations = torch.cat(subtrajectories, dim=0)
-    whitening_matrix = _fit_whitening_matrix(agent, all_observations, ridge=whitening_ridge)
+    whitening_matrix = _fit_whitening_matrix(agent, whitening_observations, ridge=whitening_ridge)
     phi = _compute_phi(agent, all_observations, whitening_matrix)
 
     discount = agent.FB._discount  # pylint: disable=protected-access
@@ -146,7 +154,9 @@ def build_btd_gmm(
         psi_tau = (discounts.unsqueeze(-1) * phi_tau).sum(dim=0)
         norm = psi_tau.norm()
         if norm > 0:
-            z_taus.append((psi_tau / norm).cpu().numpy())
+            z_taus.append(
+                (math.sqrt(psi_tau.shape[-1]) * psi_tau / norm).cpu().numpy()
+            )
 
     z_taus = np.stack(z_taus, axis=0)
     gmm = GaussianMixture(n_components=gmm_components, random_state=seed)
@@ -155,9 +165,7 @@ def build_btd_gmm(
 
 
 class GMMZSampler:
-    """Samples z ~ BTD-GMM, renormalized onto the sqrt(z_dimension)-radius
-    sphere that FB's forward/backward representations were trained on (GMM
-    samples aren't sphere-constrained, unlike FB.sample_z's Unif(S^{d-1}))."""
+    """Samples z directly from the fitted BTD-GMM without post-normalization."""
 
     def __init__(self, gmm: GaussianMixture, z_dimension: int, device: torch.device):
         self.gmm = gmm
@@ -183,5 +191,4 @@ class GMMZSampler:
         samples = self.gmm.means_[component_idx] + np.einsum(
             "nij,nj->ni", self._chol[component_idx], noise
         )
-        z = torch.as_tensor(samples, dtype=torch.float32, device=self.device)
-        return math.sqrt(self.z_dimension) * torch.nn.functional.normalize(z, dim=-1)
+        return torch.as_tensor(samples, dtype=torch.float32, device=self.device)
