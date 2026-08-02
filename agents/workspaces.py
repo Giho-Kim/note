@@ -116,6 +116,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
         replay_buffer: Union[OfflineReplayBuffer, FBReplayBuffer],
         start_step: int = 0,
         extra_checkpoint_dir: Optional[Path] = None,
+        best_checkpoint_dir: Optional[Path] = None,
+        eval_enabled: bool = True,
     ) -> None:
         """
         Trains an offline RL algorithm on one task.
@@ -124,6 +126,17 @@ class OfflineRLWorkspace(AbstractWorkspace):
         not just best-eval) state there -- a permanent local copy independent
         of model_path (which this method always deletes at the end) -- and
         uploads it to the same wandb run before that run closes.
+
+        best_checkpoint_dir, if given, keeps a permanent checkpoint named
+        ``best`` there and replaces it whenever evaluation finds a new best
+        task-reward IQM.
+
+        eval_enabled=False skips eval() (and the tilt-score/trajectory-plot/
+        save_every/best-checkpoint machinery tied to it) entirely for every
+        step -- e.g. BTD Phase 1, where only the final F,B matter and eval
+        against tasks meant for the (not-yet-built) Phase 2 policy is wasted
+        cost. Use extra_checkpoint_dir to still get a saved/uploaded final
+        checkpoint in this case.
         """
         run = None
         if self.wandb_logging:
@@ -145,6 +158,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         logger.info(f"Training {agent.name}.")
         best_mean_task_reward = -np.inf
         best_model_path = None
+        persistent_best_model_path = None
 
         # sample set transitions for z inference
         if isinstance(agent, (FB, SF, GCIQL, TDJEPA)):
@@ -174,7 +188,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
             collection_metrics = {}
             tilt_metrics = {}
 
-            if i % self.eval_frequency == 0:
+            if eval_enabled and i % self.eval_frequency == 0:
                 tilt_metrics = self._eval_task_tilt_score_metrics(
                     agent=agent,
                     observations=batch.observations,
@@ -200,10 +214,18 @@ class OfflineRLWorkspace(AbstractWorkspace):
                             checkpoint_path.as_posix(), base_path=model_path.as_posix()
                         )
 
-                if eval_metrics["eval/task_reward_iqm"] > best_mean_task_reward:
+                current_mean_task_reward = eval_metrics["eval/task_reward_iqm"]
+                if (
+                    best_model_path is None
+                    or (
+                        np.isnan(best_mean_task_reward)
+                        and not np.isnan(current_mean_task_reward)
+                    )
+                    or current_mean_task_reward > best_mean_task_reward
+                ):
                     logger.info(
                         f"New max IQM task reward: {best_mean_task_reward:.3f} -> "
-                        f"{eval_metrics['eval/task_reward_iqm']:.3f}."
+                        f"{current_mean_task_reward:.3f}."
                         f" Saving model."
                     )
 
@@ -218,7 +240,21 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     # save locally
                     best_model_path = agent.save(model_path)
 
-                    best_mean_task_reward = eval_metrics["eval/task_reward_iqm"]
+                    if best_checkpoint_dir is not None:
+                        best_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                        if persistent_best_model_path is not None:
+                            if persistent_best_model_path.is_dir():
+                                shutil.rmtree(persistent_best_model_path)
+                            else:
+                                persistent_best_model_path.unlink(missing_ok=True)
+                        agent._name = "best"  # pylint: disable=protected-access
+                        persistent_best_model_path = agent.save(best_checkpoint_dir)
+                        logger.info(
+                            f"Updated best-so-far checkpoint at "
+                            f"{persistent_best_model_path}."
+                        )
+
+                    best_mean_task_reward = current_mean_task_reward
 
                 agent.train()
 
@@ -243,7 +279,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
             }
 
             if self.wandb_logging and (
-                i % self.eval_frequency == 0 or bool(collection_metrics)
+                (eval_enabled and i % self.eval_frequency == 0) or bool(collection_metrics)
             ):
                 _log_wandb(run, metrics, i)
 
@@ -259,8 +295,10 @@ class OfflineRLWorkspace(AbstractWorkspace):
             logger.info(f"Saved final agent state to {extra_checkpoint_path}.")
 
         if self.wandb_logging:
-            # save to wandb_logging
-            run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
+            # save to wandb_logging (best_model_path is None if eval_enabled
+            # was False -- nothing was ever picked as "best")
+            if best_model_path is not None:
+                run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
             run.finish()
 
         # delete local models

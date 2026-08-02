@@ -95,6 +95,61 @@ class TDJEPAAgent:
                 linear=self.cfg.train.tilt_linear,
             )
 
+    def enable_tilt(
+        self,
+        tilt_beta: float,
+        tilt_temperature: float,
+        tilt_temperature_start: float,
+        tilt_temperature_end: float,
+        tilt_candidate_multiplier: int,
+        tilt_init_geom_ratio: Optional[float],
+        tilt_ridge_alpha: float,
+        tilt_ridge_min: float,
+        tilt_start_step: int = 0,
+        tilting_by_z: bool = False,
+        tilt_goal: bool = False,
+        tilt_refresh_interval: int = 1,
+        tilt_uniform_mix: float = 0.5,
+        tilt_linear: bool = False,
+    ) -> None:
+        """(Re)builds self.tilt from scratch -- see FB.enable_tilt. Safe to
+        call after __init__ (e.g. BTD Phase 2, where tilt should score
+        candidates against the reinitialized/retrained phi rather than
+        Phase 1's) -- previous tilt state is discarded.
+
+        self.cfg (and cfg.train) are frozen pydantic models (model_config has
+        frozen=True) -- cfg.train.x = ... would raise, so this rebuilds both
+        via model_copy(update=...) and rebinds self.cfg (a plain attribute on
+        this object, not itself frozen) to the new instance. Every read of
+        self.cfg.train.* elsewhere (_tilt_active, _tilt_score_this_step, the
+        wrapper's _tilt_temperature, ...) resolves self.cfg at call time, so
+        this takes effect immediately."""
+        new_train_cfg = self.cfg.train.model_copy(
+            update={
+                "tilt": True,
+                "tilting_by_z": tilting_by_z,
+                "tilt_ridge_alpha": tilt_ridge_alpha,
+                "tilt_ridge_min": tilt_ridge_min,
+                "tilt_start_step": tilt_start_step,
+                "tilt_goal": tilt_goal,
+                "tilt_refresh_interval": max(1, tilt_refresh_interval),
+                "tilt_temperature_start": tilt_temperature_start,
+                "tilt_temperature_end": tilt_temperature_end,
+            }
+        )
+        self.cfg = self.cfg.model_copy(update={"train": new_train_cfg})
+
+        initial_z = self._model.sample_z(self.cfg.train.batch_size, device=self.device)
+        self.tilt = TiltLatentSelector(
+            z=initial_z,
+            beta=tilt_beta,
+            temperature=tilt_temperature,
+            candidate_multiplier=tilt_candidate_multiplier,
+            init_geom_ratio=tilt_init_geom_ratio,
+            uniform_mix=tilt_uniform_mix,
+            linear=tilt_linear,
+        )
+
     @property
     def device(self):
         return self._model.device
@@ -730,6 +785,127 @@ class TDJEPAAgent:
                 "phi_tdjepa_loss": phi_tdjepa_loss,
             }
         return output_metrics
+
+    def reinit_for_btd_phase2(self, lr_phi: float, lr_predictor: float, lr_actor: float) -> None:
+        """BTD Phase 2 setup: discards Phase-1's phi side (encoder + predictor,
+        playing FB's F role) and the actor, reinitializing them from scratch
+        with fresh optimizers. psi (playing FB's B role) is untouched here --
+        the caller freezes psi's own encoder afterwards, matching FB's
+        main_btd.py flow (agent.reinit_forward_representation(...) then an
+        explicit freeze loop). psi_predictor is not psi(s) itself (psi(s) is
+        just _psi_rgb_encoder + _psi_mlp_encoder) -- it is retrained here too."""
+        reinit_modules = [
+            self._model._phi_rgb_encoder,
+            self._model._phi_mlp_encoder,
+            self._model._phi_predictor,
+            self._model._actor,
+        ]
+        if not self.cfg.model.symmetric:
+            reinit_modules.append(self._model._psi_predictor)
+        for module in reinit_modules:
+            for submodule in module.modules():
+                if hasattr(submodule, "reset_parameters"):
+                    submodule.reset_parameters()
+
+        self._model._target_phi_mlp_encoder.load_state_dict(self._model._phi_mlp_encoder.state_dict())
+        self._model._target_phi_predictor.load_state_dict(self._model._phi_predictor.state_dict())
+        if not self.cfg.model.symmetric:
+            self._model._target_psi_predictor.load_state_dict(self._model._psi_predictor.state_dict())
+
+        self.phi_encoder_optimizer = torch.optim.Adam(
+            list(self._model._phi_mlp_encoder.parameters()) + list(self._model._phi_rgb_encoder.parameters()),
+            lr=lr_phi,
+            capturable=False,
+            weight_decay=self.cfg.train.weight_decay,
+        )
+        self.phi_predictor_optimizer = torch.optim.Adam(
+            self._model._phi_predictor.parameters(),
+            lr=lr_predictor,
+            capturable=False,
+            weight_decay=self.cfg.train.weight_decay,
+        )
+        self.actor_optimizer = torch.optim.Adam(
+            self._model._actor.parameters(),
+            lr=lr_actor,
+            capturable=False,
+            weight_decay=self.cfg.train.weight_decay,
+        )
+        if not self.cfg.model.symmetric:
+            self.psi_predictor_optimizer = torch.optim.Adam(
+                self._model._psi_predictor.parameters(),
+                lr=lr_predictor,
+                capturable=False,
+                weight_decay=self.cfg.train.weight_decay,
+            )
+        # reset_parameters()/load_state_dict() mutate existing Parameter
+        # tensors in place (not new objects), so the *_paramlist tuples
+        # setup_training() cached for soft_update_params still point at the
+        # right (now-reinitialized) params -- no need to rebuild them.
+
+    def update_critic_btd(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+        next_observations: torch.Tensor,
+        discounts: torch.Tensor,
+        zs: torch.Tensor,
+        whitening_matrix: torch.Tensor,
+        step: int,
+    ) -> Dict[str, torch.Tensor]:
+        """BTD Phase 2 critic update: an SF-style Bellman residual on the phi
+        side alone (encoder + predictor), bootstrapped off the fixed
+        phi_btd(s) reward instead of TD-JEPA's own joint phi/psi consistency
+        loss (update_tdjepa*). psi stays frozen throughout -- used here only
+        (via psi(observations)) to compute phi_btd(s_t): TD-JEPA uses raw
+        psi(s) directly (no whitening matrix, no per-state normalization --
+        only the discounted subtrajectory sum used to build the BTD GMM gets
+        L2-normalized, see agents/td_jepa/btd.py), so whitening_matrix is
+        always None here and kept only so this mirrors FB.update_critic_btd's
+        signature exactly (OfflineRLWorkspace.train_btd calls it
+        polymorphically)."""
+        with torch.no_grad():
+            psi_st = self._model.psi(observations)
+            phi_btd_st = psi_st @ whitening_matrix.T if whitening_matrix is not None else psi_st
+            phi_btd_dot_z = torch.sum(phi_btd_st * zs, dim=1)
+
+            next_phi_obs = self._model._phi_rgb_encoder(self._model._normalize(next_observations))
+            target_phi_enc = self._model._target_phi_mlp_encoder(next_phi_obs)
+            actor_in = target_phi_enc if self.cfg.model.actor_use_full_encoder else next_phi_obs
+            next_action = self.sample_action_from_latent(actor_in, zs, mean=False)
+            target_preds = self._model._target_phi_predictor(target_phi_enc, zs, next_action)
+            if target_preds.ndim == 3:
+                target_preds = target_preds.mean(dim=0)
+            target_Q = torch.sum(target_preds * zs, dim=-1)
+            target = phi_btd_dot_z + discounts.squeeze(-1) * target_Q
+
+        phi_obs = self._model._phi_rgb_encoder(self._model._normalize(observations))
+        phi_enc = self._model._phi_mlp_encoder(phi_obs)
+        preds = self._model._phi_predictor(phi_enc, zs, actions)
+        if preds.ndim == 3:
+            preds = preds.mean(dim=0)
+        Q = torch.sum(preds * zs, dim=-1)
+        critic_loss = 0.5 * (Q - target).pow(2).mean()
+
+        self.phi_encoder_optimizer.zero_grad(set_to_none=True)
+        self.phi_predictor_optimizer.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        self.phi_encoder_optimizer.step()
+        self.phi_predictor_optimizer.step()
+
+        with torch.no_grad():
+            _soft_update_params(
+                self._phi_predictor_paramlist, self._target_phi_predictor_paramlist, self.cfg.train.predictor_target_tau
+            )
+            _soft_update_params(
+                self._phi_mlp_encoder_paramlist, self._target_phi_mlp_encoder_paramlist, self.cfg.train.encoder_target_tau
+            )
+
+        return {
+            "train/btd_critic_loss": critic_loss.detach(),
+            "train/btd_phi_dot_z": phi_btd_dot_z.mean().detach(),
+            "train/btd_target_Q": target_Q.mean().detach(),
+            "train/btd_Q": Q.mean().detach(),
+        }
 
     def update_actor(
         self,

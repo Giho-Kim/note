@@ -1,7 +1,5 @@
-export WANDB_PROJECT=smoke
-python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --checkpoint_path checkpoints/w/42_320000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 42 --verbose
-python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip  --checkpoint_path checkpoints/w/43_260000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 43 --verbose
-python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --checkpoint_path checkpoints/w/44_200000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 44 --verbose
-python main_btd.py jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --checkpoint_path checkpoints/j/42_140000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 42 --verbose
-python main_btd.py jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --checkpoint_path checkpoints/j/43_120000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 43 --verbose
-python main_btd.py jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --checkpoint_path checkpoints/j/44_60000.pickle --n_subtrajectories 100000 --subtraj_min_len 5 --subtraj_max_len 50 --gmm_components 20 --learning_steps 200000 --tasks_per_batch 8 --transitions_per_task 64 --eval_frequency 20000 --eval_rollouts 10 --seed 44 --verbose
+export WANDB_PROJECT=BTD
+python main_btd.py  quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 42
+python main_btd.py  quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 43
+python main_btd.py  quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 44
+python main_btd.py  quadruped rnd  --eval_tasks stand jump roll roll_fast escape --seed 45

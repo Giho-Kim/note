@@ -274,3 +274,92 @@ class TDJEPA(AbstractAgent):
         loaded = MetaTDJEPAAgent.load(str(filepath), device=load_device)
         self.agent = loaded
         return self
+
+    # --- BTD Phase 2 shims: match FB's method names/signatures exactly so
+    # OfflineRLWorkspace.train_btd (and its tilt integration) can drive either
+    # agent polymorphically without any isinstance branching there. ---
+
+    @property
+    def tilt(self):
+        return self.agent.tilt
+
+    @tilt.setter
+    def tilt(self, value) -> None:
+        self.agent.tilt = value
+
+    def _tilt_active(self, step: Optional[int]) -> bool:
+        return self.agent._tilt_active(step)  # pylint: disable=protected-access
+
+    def _tilt_score_this_step(self, step: Optional[int]) -> bool:
+        return self.agent._tilt_score_this_step(step)  # pylint: disable=protected-access
+
+    def _tilt_temperature(self, step: int) -> float:
+        progress = min(max(step, 0) / self.agent.cfg.train.learning_steps, 1.0)
+        return self.agent.cfg.train.tilt_temperature_start + progress * (
+            self.agent.cfg.train.tilt_temperature_end - self.agent.cfg.train.tilt_temperature_start
+        )
+
+    def enable_tilt(self, **kwargs) -> None:
+        self.agent.enable_tilt(**kwargs)
+
+    def reinit_forward_representation(self, learning_rate: float, actor_learning_rate: float = None) -> None:
+        """BTD Phase 2: discards phi (F's role) + actor, reinitializes with
+        fresh optimizers at `learning_rate` (phi/predictor) and
+        `actor_learning_rate` (defaults to `learning_rate` if not given,
+        mirroring FB.reinit_forward_representation). psi (B's role) is
+        untouched -- the caller freezes it afterwards, matching FB's
+        main_btd.py flow."""
+        if actor_learning_rate is None:
+            actor_learning_rate = learning_rate
+        self.agent.reinit_for_btd_phase2(
+            lr_phi=learning_rate, lr_predictor=learning_rate, lr_actor=actor_learning_rate
+        )
+
+    def score_and_features(
+        self, observations: torch.Tensor, z: torch.Tensor, step: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        phi_obs = self.agent._model._phi_rgb_encoder(  # pylint: disable=protected-access
+            self.agent._model._normalize(observations)  # pylint: disable=protected-access
+        )
+        return self.agent.score_and_grad(phi_obs=phi_obs, z=z)
+
+    def score_from_features(self, features: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+        return self.agent.score_from_features(features, z)
+
+    def update_actor(
+        self, observation: torch.Tensor, z: torch.Tensor, step: int
+    ) -> Dict[str, float]:
+        """BTD Phase 2 actor update. The inner update_actor's `action` arg is
+        only used for the optional behaviour-cloning loss (bc_coeff > 0);
+        BTD doesn't use it, so a dummy zero tensor is fine when bc_coeff=0
+        (the default) -- if bc_coeff > 0 this would need the real batch
+        actions threaded through instead."""
+        phi_obs = self.agent._model._phi_rgb_encoder(  # pylint: disable=protected-access
+            self.agent._model._normalize(observation)  # pylint: disable=protected-access
+        )
+        dummy_action = torch.zeros(
+            observation.shape[0], self.agent.action_dim, device=observation.device
+        )
+        metrics = self.agent.update_actor(phi_obs=phi_obs, action=dummy_action, z=z)
+        return {key: float(value.detach().cpu()) for key, value in metrics.items()}
+
+    def update_critic_btd(
+        self,
+        observations: torch.Tensor,
+        actions: torch.Tensor,
+        next_observations: torch.Tensor,
+        discounts: torch.Tensor,
+        zs: torch.Tensor,
+        whitening_matrix: torch.Tensor,
+        step: int,
+    ) -> Dict[str, float]:
+        metrics = self.agent.update_critic_btd(
+            observations=observations,
+            actions=actions,
+            next_observations=next_observations,
+            discounts=discounts,
+            zs=zs,
+            whitening_matrix=whitening_matrix,
+            step=step,
+        )
+        return {key: float(value.detach().cpu()) for key, value in metrics.items()}

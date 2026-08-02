@@ -725,13 +725,18 @@ class FB(AbstractAgent):
         return total_loss, metrics, \
                F1, F2, B_next, M1_next, M2_next, target_B, off_diagonal, actor_std_dev
 
-    def reinit_forward_representation(self, learning_rate: float) -> None:
+    def reinit_forward_representation(self, learning_rate: float, actor_learning_rate: float = None) -> None:
         """BTD Phase 2 setup: discards the Phase-1 F (trained jointly with B
-        via the FB objective) and reinitializes it from scratch, along with a
-        fresh optimizer. B (and its target) are left untouched and stay
-        frozen -- only F is retrained, against the fixed phi(s) = whitening
-        @ B(s) computed at the end of Phase 1 (see build_btd_gmm)."""
-        for module in (self.FB.forward_representation, self.FB.forward_representation_target):
+        via the FB objective) and the actor, reinitializing both from scratch
+        with fresh optimizers -- mirrors TD-JEPA's reinit_for_btd_phase2,
+        which also discards its phi side and actor. B (and its target) are
+        left untouched and stay frozen -- only F and the actor are retrained,
+        against the fixed phi(s) = whitening @ B(s) computed at the end of
+        Phase 1 (see build_btd_gmm). actor_learning_rate defaults to
+        `learning_rate` (the critic/F learning rate) if not given."""
+        if actor_learning_rate is None:
+            actor_learning_rate = learning_rate
+        for module in (self.FB.forward_representation, self.FB.forward_representation_target, self.actor):
             for submodule in module.modules():
                 if hasattr(submodule, "reset_parameters"):
                     submodule.reset_parameters()
@@ -740,6 +745,9 @@ class FB(AbstractAgent):
         )
         self.forward_optimizer = torch.optim.Adam(
             self.FB.forward_representation.parameters(), lr=learning_rate
+        )
+        self.actor_optimizer = torch.optim.Adam(
+            self.actor.parameters(), lr=actor_learning_rate
         )
 
     def update_critic_btd(

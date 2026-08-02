@@ -741,10 +741,23 @@ workspace = OfflineRLWorkspace(
 
 if __name__ == "__main__":
 
+    checkpoint_run_name = (
+        config.get("model_name")
+        or config.get("run_name")
+        or (
+            f"{config['domain_name']}_{config['exploration_algorithm']}_"
+            f"seed{config['seed']}_{time}"
+        )
+    )
+    checkpoint_dir = model_dir / "checkpoints" / checkpoint_run_name
+    print(f"Saving best and final checkpoints to {checkpoint_dir}")
+
     workspace.train(
         agent=agent,
         tasks=config["eval_tasks"],
         agent_config=config,
         replay_buffer=replay_buffer,
         start_step=config["resume_step"],
+        extra_checkpoint_dir=checkpoint_dir,
+        best_checkpoint_dir=checkpoint_dir,
     )
