@@ -165,7 +165,8 @@ def build_btd_gmm(
 
 
 class GMMZSampler:
-    """Samples z directly from the fitted BTD-GMM without post-normalization."""
+    """Samples z from the fitted BTD-GMM, then projects back onto the
+    radius-sqrt(d) sphere: z = sqrt(d) * z / ||z||."""
 
     def __init__(self, gmm: GaussianMixture, z_dimension: int, device: torch.device):
         self.gmm = gmm
@@ -191,4 +192,6 @@ class GMMZSampler:
         samples = self.gmm.means_[component_idx] + np.einsum(
             "nij,nj->ni", self._chol[component_idx], noise
         )
+        norm = np.linalg.norm(samples, axis=-1, keepdims=True)
+        samples = math.sqrt(self.z_dimension) * samples / norm
         return torch.as_tensor(samples, dtype=torch.float32, device=self.device)
