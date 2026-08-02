@@ -2,6 +2,7 @@
 
 import logging
 import math
+from copy import deepcopy
 from pathlib import Path
 from typing import Tuple, Dict, Optional
 
@@ -770,6 +771,14 @@ class FB(AbstractAgent):
             self.actor.parameters(), lr=actor_learning_rate
         )
 
+        # TD3 bootstraps through a slowly moving target policy, not the online
+        # actor that is being optimized against the current critic.  Phase 1's
+        # FB objective does not need an actor target, so create it only when we
+        # enter BTD Phase 2.  This also makes old Phase-1 checkpoints (which do
+        # not contain actor_target) backward compatible.
+        self.actor_target = deepcopy(self.actor)
+        self.actor_target.requires_grad_(False)
+
     def update_critic_btd(
         self,
         observations: torch.Tensor,
@@ -788,13 +797,17 @@ class FB(AbstractAgent):
         -- B stays frozen throughout, used only to compute phi(s).
 
         update_target gates F's target soft-update, kept in lockstep with the
-        actor's delayed update (TD3's policy_freq) by the caller."""
+        actor's delayed update (TD3's policy_freq) by the caller. The target
+        actor is updated immediately after that delayed online-actor update in
+        update_actor()."""
         with torch.no_grad():
             phi_st = self.FB.backward_representation(observations) @ whitening_matrix.T
             phi_dot_z = torch.einsum("sd, sd -> s", phi_st, zs)
 
             actor_std_dev = schedule(self.std_dev_schedule, step)
-            next_actions, _ = self.actor(next_observations, zs, actor_std_dev, sample=True)
+            next_actions, _ = self.actor_target(
+                next_observations, zs, actor_std_dev, sample=True
+            )
             target_F1, target_F2 = self.FB.forward_representation_target(
                 observation=next_observations, z=zs, action=next_actions
             )
@@ -877,6 +890,18 @@ class FB(AbstractAgent):
         for param in self.actor.parameters():
             param.grad.data.clamp_(-1, 1)
         self.actor_optimizer.step()
+
+        # update_actor is called at the delayed TD3 policy frequency during
+        # BTD Phase 2, so update the target policy only after the online policy
+        # has taken its optimizer step.  getattr keeps ordinary Phase-1 FB
+        # training and legacy checkpoints unchanged.
+        actor_target = getattr(self, "actor_target", None)
+        if actor_target is not None:
+            self.soft_update_params(
+                network=self.actor,
+                target_network=actor_target,
+                tau=self._tau,
+            )
 
         metrics = {
             "train/actor_loss": actor_loss.item(),
