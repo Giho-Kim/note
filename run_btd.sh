@@ -1,5 +1,5 @@
-export WANDB_PROJECT=REVISION
-python main_btd.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.0 --phase2_learning_steps 500000 --phase1_checkpoint_path ./checkpoints/fb_rnd_10k/walker.pickle --reinit_phase2_forward --reinit_phase2_actor --seed 42
-python main_btd.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.0 --phase2_learning_steps 500000 --phase1_checkpoint_path ./checkpoints/fb_rnd_10k/walker.pickle --reinit_phase2_forward --reinit_phase2_actor --seed 43
-python main_btd.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.0 --phase2_learning_steps 500000 --phase1_checkpoint_path ./checkpoints/fb_rnd_10k/walker.pickle --reinit_phase2_forward --reinit_phase2_actor --seed 44
-python main_btd.py fb walker rnd  --eval_tasks stand walk run flip  --z_mix_ratio 0.0 --phase2_learning_steps 500000 --phase1_checkpoint_path ./checkpoints/fb_rnd_10k/walker.pickle --reinit_phase2_forward --reinit_phase2_actor --seed 45
+export WANDB_PROJECT=RND
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.99 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.5 --seed 42
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.99 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.5 --seed 43
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.99 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.5 --seed 44
+python main_exorl.py fb walker rnd  --eval_tasks stand walk run flip --z_mix_ratio 0.5 --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 5 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.99 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.5 --seed 45

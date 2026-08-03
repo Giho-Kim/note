@@ -578,7 +578,10 @@ class FB(AbstractAgent):
         step: int,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         std = schedule(self.std_dev_schedule, step)
-        actions, _ = self.actor(observations, z, std, sample=True)
+        # Tilt scores should reflect the policy itself, not Monte Carlo noise from
+        # a single action draw.  Use the actor distribution's mean action here;
+        # stochastic sampling remains unchanged in the actual training updates.
+        actions, _ = self.actor(observations, z, std, sample=False)
         target_f1, target_f2 = self.FB.forward_representation_target(
             observation=observations,
             z=z,

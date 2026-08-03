@@ -5,6 +5,7 @@
 
 import json
 import pickle
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, Literal, Optional, Tuple
 
@@ -606,7 +607,9 @@ class TDJEPAAgent:
         with torch.no_grad():
             phi_enc = self._model._target_phi_mlp_encoder(phi_obs)
             actor_in = phi_enc if self.cfg.model.actor_use_full_encoder else phi_obs
-            action = self.sample_action_from_latent(actor_in, z, mean=False)
+            # Keep leverage scoring deterministic by evaluating the actor's mean
+            # action.  Other training paths continue to sample from the policy.
+            action = self.sample_action_from_latent(actor_in, z, mean=True)
 
         target_phi_predictors = self._model._target_phi_predictor(phi_enc, z, action)
         if target_phi_predictors.ndim == 3:
@@ -850,6 +853,12 @@ class TDJEPAAgent:
             capturable=False,
             weight_decay=self.cfg.train.weight_decay,
         )
+        # BTD Phase 2 follows the same high-level target-policy scheme as FB:
+        # bootstrap through a frozen target actor and update it only after a
+        # delayed online-actor step. The regular TD-JEPA training path remains
+        # unchanged and does not use this module.
+        self._btd_actor_target = deepcopy(self._model._actor)
+        self._btd_actor_target.requires_grad_(False)
         if not self.cfg.model.symmetric:
             self.psi_predictor_optimizer = torch.optim.Adam(
                 self._model._psi_predictor.parameters(),
@@ -892,7 +901,9 @@ class TDJEPAAgent:
             next_phi_obs = self._model._phi_rgb_encoder(self._model._normalize(next_observations))
             target_phi_enc = self._model._target_phi_mlp_encoder(next_phi_obs)
             actor_in = target_phi_enc if self.cfg.model.actor_use_full_encoder else next_phi_obs
-            next_action = self.sample_action_from_latent(actor_in, zs, mean=False)
+            target_actor = getattr(self, "_btd_actor_target", self._model._actor)
+            target_dist = target_actor(actor_in, zs, self._model.cfg.actor_std)
+            next_action = target_dist.sample(clip=self.cfg.train.stddev_clip)
             target_preds = self._model._target_phi_predictor(target_phi_enc, zs, next_action)
             if target_preds.ndim == 3:
                 target_preds = target_preds.mean(dim=0)
@@ -928,6 +939,15 @@ class TDJEPAAgent:
             "train/btd_target_Q": target_Q.mean().detach(),
             "train/btd_Q": Q.mean().detach(),
         }
+
+    def update_btd_actor_target(self) -> None:
+        """Soft-update the target actor used only by BTD Phase 2."""
+        with torch.no_grad():
+            _soft_update_params(
+                tuple(self._model._actor.parameters()),
+                tuple(self._btd_actor_target.parameters()),
+                self.cfg.train.predictor_target_tau,
+            )
 
     def update_actor(
         self,

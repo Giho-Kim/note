@@ -412,6 +412,7 @@ class TDJEPA(AbstractAgent):
             observation.shape[0], self.agent.action_dim, device=observation.device
         )
         metrics = self.agent.update_actor(phi_obs=phi_obs, action=dummy_action, z=z)
+        self.agent.update_btd_actor_target()
         return {key: float(value.detach().cpu()) for key, value in metrics.items()}
 
     def update_critic_btd(

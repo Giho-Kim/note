@@ -142,9 +142,14 @@ tilt_ridge_min_override = cli_args.pop("tilt_ridge_min", None)
 tilt_start_step_override = cli_args.pop("tilt_start_step", None)
 tilt_refresh_interval_override = cli_args.pop("tilt_refresh_interval", None)
 tilt_uniform_mix_override = cli_args.pop("tilt_uniform_mix", None)
+z_mix_ratio_override = cli_args.pop("z_mix_ratio", None)
 eval_frequency_override = cli_args.pop("eval_frequency", None)
 actor_learning_rate_override = cli_args.pop("actor_learning_rate", None)
 config.update(cli_args)
+if z_mix_ratio_override is not None:
+    config["z_mix_ratio"] = z_mix_ratio_override
+if "z_mix_ratio" not in config:
+    config["z_mix_ratio"] = 0.5
 if eval_frequency_override is not None:
     if eval_frequency_override <= 0:
         raise ValueError("eval_frequency must be positive.")
@@ -349,6 +354,9 @@ elif config["algorithm"] == "td3":
     eval_std = None
 
 elif config["algorithm"] == "td_jepa":
+    if config["domain_name"] == "point_mass_maze":
+        config["discount"] = 0.99
+
     agent = TDJEPA(
         observation_length=observation_length,
         action_length=action_length,
