@@ -681,9 +681,20 @@ else:
 if config["checkpoint_path"] is not None:
     checkpoint_path = Path(config["checkpoint_path"])
     print(f"Loading agent checkpoint from {checkpoint_path}")
-    agent = torch.load(checkpoint_path, map_location=config["device"], weights_only=False)
-    agent.to(config["device"])
-    agent._device = config["device"]  # pylint: disable=protected-access
+    if isinstance(agent, TDJEPA):
+        # TD-JEPA checkpoints are directories containing config/model/
+        # optimizer files, unlike the single-file torch pickles used by the
+        # other agents.  Keep the freshly constructed ZSRL wrapper and load
+        # the vendored TD-JEPA agent into it.
+        agent.load(checkpoint_path)
+    else:
+        agent = torch.load(
+            checkpoint_path,
+            map_location=config["device"],
+            weights_only=False,
+        )
+        agent.to(config["device"])
+        agent._device = config["device"]  # pylint: disable=protected-access
     # checkpoint saves overwrite agent._name with the (int) step number just
     # before pickling (see OfflineRLWorkspace.train), which then breaks
     # wandb.init(tags=[agent.name]) on resume -- restore the algorithm name.
@@ -729,6 +740,26 @@ if config["checkpoint_path"] is not None:
             torch.set_rng_state(cpu_rng_state)
             if cuda_rng_state is not None:
                 torch.cuda.set_rng_state_all(cuda_rng_state)
+    elif isinstance(agent, TDJEPA) and config["tilt"]:
+        # Loading replaces the wrapper's freshly configured inner agent with
+        # the checkpoint's saved configuration. Rebuild tilt from the current
+        # invocation's CLI/config values, matching the FB resume behavior.
+        agent.agent.enable_tilt(
+            tilt_beta=config["tilt_beta"],
+            tilt_temperature=config["tilt_temperature"],
+            tilt_temperature_start=config["tilt_temperature_start"],
+            tilt_temperature_end=config["tilt_temperature_end"],
+            tilt_candidate_multiplier=config["tilt_candidate_multiplier"],
+            tilt_init_geom_ratio=config["tilt_init_geom_ratio"],
+            tilt_ridge_alpha=config["tilt_ridge_alpha"],
+            tilt_ridge_min=config["tilt_ridge_min"],
+            tilt_start_step=config["tilt_start_step"],
+            tilting_by_z=config["tilting_by_z"],
+            tilt_goal=config["tilt_goal"],
+            tilt_refresh_interval=config["tilt_refresh_interval"],
+            tilt_uniform_mix=config["tilt_uniform_mix"],
+            tilt_linear=config["tilt_linear"],
+        )
 
 workspace = OfflineRLWorkspace(
     reward_constructor=reward_constructor,

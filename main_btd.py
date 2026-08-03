@@ -54,6 +54,15 @@ parser.add_argument("--phase1_checkpoint_dir", type=str, default=None)
 # a directory saved the same way). Only Phase 1's GMM build + Phase 2 run.
 parser.add_argument("--phase1_checkpoint_path", type=str, default=None)
 parser.add_argument("--phase1_learning_steps", type=int, default=2000000)
+
+# --- Phase 2 checkpointing (mirrors phase1_checkpoint_dir's semantics: a
+# permanent local final-state copy, uploaded to wandb once at the end) plus
+# a permanent local best-so-far checkpoint, also uploaded to wandb whenever
+# it's replaced. Without these, Phase 2 only has a transient copy that's
+# deleted at the end of train_btd -- with --wandb_logging False that means
+# nothing from Phase 2 persists at all. ---
+parser.add_argument("--phase2_checkpoint_dir", type=str, default=None)
+parser.add_argument("--phase2_best_checkpoint_dir", type=str, default=None)
 parser.add_argument("--batch_size", type=int, default=1024)
 parser.add_argument("--critic_learning_rate", type=float, default=None)
 parser.add_argument("--actor_learning_rate", type=float, default=None)
@@ -524,6 +533,15 @@ if __name__ == "__main__":
             tilt_linear=args.tilt_linear,
         )
 
+    phase2_checkpoint_dir = Path(
+        args.phase2_checkpoint_dir
+        or model_dir / "btd_phase2" / f"{args.domain_name}_{args.exploration_algorithm}_seed{args.seed}"
+    )
+    phase2_best_checkpoint_dir = Path(
+        args.phase2_best_checkpoint_dir
+        or model_dir / "btd_phase2_best" / f"{args.domain_name}_{args.exploration_algorithm}_seed{args.seed}"
+    )
+
     print(f"Phase 2: critic (forward-role) + actor training for {args.phase2_learning_steps} steps...")
     workspace.train_btd(
         agent=agent,
@@ -538,4 +556,6 @@ if __name__ == "__main__":
         whitening_matrix=whitening_matrix,
         z_mix_ratio=args.z_mix_ratio,
         policy_freq=args.policy_freq,
+        extra_checkpoint_dir=phase2_checkpoint_dir,
+        best_checkpoint_dir=phase2_best_checkpoint_dir,
     )

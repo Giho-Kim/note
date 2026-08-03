@@ -1019,7 +1019,11 @@ class TDJEPAAgent:
             action_dim = args["action_dim"]
 
         agent = config.build(obs_space, action_dim)
-        optimizers = torch.load(str(path / "optimizers.pth"), weights_only=True)
+        optimizers = torch.load(
+            str(path / "optimizers.pth"),
+            weights_only=True,
+            map_location=device,
+        )
         for k, v in optimizers.items():
             getattr(agent, k).load_state_dict(v)
         safetensors.torch.load_model(agent._model, path / "model/model.safetensors", device=device)

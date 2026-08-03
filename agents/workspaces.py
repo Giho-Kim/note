@@ -249,6 +249,11 @@ class OfflineRLWorkspace(AbstractWorkspace):
                                 persistent_best_model_path.unlink(missing_ok=True)
                         agent._name = "best"  # pylint: disable=protected-access
                         persistent_best_model_path = agent.save(best_checkpoint_dir)
+                        if self.wandb_logging:
+                            run.save(
+                                persistent_best_model_path.as_posix(),
+                                base_path=best_checkpoint_dir.as_posix(),
+                            )
                         logger.info(
                             f"Updated best-so-far checkpoint at "
                             f"{persistent_best_model_path}."
@@ -318,6 +323,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
         whitening_matrix: Optional[torch.Tensor] = None,
         z_mix_ratio: float = 0.0,
         policy_freq: int = 2,
+        extra_checkpoint_dir: Optional[Path] = None,
+        best_checkpoint_dir: Optional[Path] = None,
     ) -> None:
         """
         BTD Phase 2 training with a main_exorl-style goal-z mixture.
@@ -331,6 +338,15 @@ class OfflineRLWorkspace(AbstractWorkspace):
         policy_freq implements TD3's delayed policy update: the critic (F)
         updates every step, while the actor and F's target network only
         update every policy_freq steps (default 2, matching Fujimoto et al.).
+
+        extra_checkpoint_dir / best_checkpoint_dir mirror train()'s semantics:
+        the former is a permanent local copy of the FINAL agent state (saved
+        and uploaded to wandb once, after the loop); the latter is a permanent
+        local "best" checkpoint, replaced and re-uploaded to wandb whenever
+        eval finds a new best task-reward IQM. Without these, Phase 2 only
+        ever has a transient copy under model_path, which is deleted at the
+        end of this method -- with wandb_logging off that means nothing
+        persists at all.
         """
         run = None
         if self.wandb_logging:
@@ -352,6 +368,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         logger.info(f"BTD critic and actor training for {agent.name}.")
         best_mean_task_reward = -np.inf
         best_model_path = None
+        persistent_best_model_path = None
         batch_size = tasks_per_batch * transitions_per_task
 
         # sample set transitions for z inference (used by eval(), unrelated to BTD)
@@ -505,6 +522,25 @@ class OfflineRLWorkspace(AbstractWorkspace):
                     agent._name = i  # pylint: disable=protected-access
                     best_model_path = agent.save(model_path)
 
+                    if best_checkpoint_dir is not None:
+                        best_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                        if persistent_best_model_path is not None:
+                            if persistent_best_model_path.is_dir():
+                                shutil.rmtree(persistent_best_model_path)
+                            else:
+                                persistent_best_model_path.unlink(missing_ok=True)
+                        agent._name = "best"  # pylint: disable=protected-access
+                        persistent_best_model_path = agent.save(best_checkpoint_dir)
+                        if self.wandb_logging:
+                            run.save(
+                                persistent_best_model_path.as_posix(),
+                                base_path=best_checkpoint_dir.as_posix(),
+                            )
+                        logger.info(
+                            f"Updated best-so-far checkpoint at "
+                            f"{persistent_best_model_path}."
+                        )
+
                     best_mean_task_reward = eval_metrics["eval/task_reward_iqm"]
 
                 agent.train()
@@ -514,8 +550,20 @@ class OfflineRLWorkspace(AbstractWorkspace):
             if self.wandb_logging and i % self.eval_frequency == 0:
                 _log_wandb(run, metrics, i)
 
+        if extra_checkpoint_dir is not None:
+            extra_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            agent._name = "final"  # pylint: disable=protected-access
+            extra_checkpoint_path = agent.save(extra_checkpoint_dir)
+            if self.wandb_logging:
+                run.save(
+                    extra_checkpoint_path.as_posix(),
+                    base_path=extra_checkpoint_dir.as_posix(),
+                )
+            logger.info(f"Saved final agent state to {extra_checkpoint_path}.")
+
         if self.wandb_logging:
-            run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
+            if best_model_path is not None:
+                run.save(best_model_path.as_posix(), base_path=model_path.as_posix())
             run.finish()
 
         shutil.rmtree(model_path)
