@@ -620,7 +620,9 @@ class FB(AbstractAgent):
 
         self.FB_optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.FB.parameters(), max_norm=1.0)
+        for param in self.FB.parameters():
+            if param.grad is not None:
+                param.grad.data.clamp_(-1, 1)
         self.FB_optimizer.step()
 
         return metrics
@@ -826,9 +828,9 @@ class FB(AbstractAgent):
 
         self.forward_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.FB.forward_representation.parameters(), max_norm=1.0
-        )
+        for param in self.FB.forward_representation.parameters():
+            if param.grad is not None:
+                param.grad.data.clamp_(-1, 1)
         self.forward_optimizer.step()
 
         if update_target:
@@ -888,7 +890,9 @@ class FB(AbstractAgent):
 
         self.actor_optimizer.zero_grad(set_to_none=True)
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), max_norm=1.0)
+        for param in self.actor.parameters():
+            if param.grad is not None:
+                param.grad.data.clamp_(-1, 1)
         self.actor_optimizer.step()
 
         # update_actor is called at the delayed TD3 policy frequency during
