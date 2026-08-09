@@ -68,6 +68,7 @@ class FB(AbstractAgent):
         tilt_refresh_interval: int = 1,
         tilt_uniform_mix: float = 0.5,
         tilt_linear: bool = False,
+        tilt_free_compete: bool = False,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -162,6 +163,7 @@ class FB(AbstractAgent):
                 tilt_refresh_interval=tilt_refresh_interval,
                 tilt_uniform_mix=tilt_uniform_mix,
                 tilt_linear=tilt_linear,
+                tilt_free_compete=tilt_free_compete,
             )
         else:
             self._tilt_temperature_start = tilt_temperature_start
@@ -172,6 +174,7 @@ class FB(AbstractAgent):
             self._tilt_start_step = tilt_start_step
             self._tilt_goal = tilt_goal
             self._tilt_refresh_interval = max(1, tilt_refresh_interval)
+            self._tilt_free_compete = tilt_free_compete
 
     def enable_tilt(
         self,
@@ -189,6 +192,7 @@ class FB(AbstractAgent):
         tilt_refresh_interval: int = 1,
         tilt_uniform_mix: float = 0.5,
         tilt_linear: bool = False,
+        tilt_free_compete: bool = False,
     ) -> None:
         """(Re)builds self.tilt from scratch. Safe to call after __init__ (e.g.
         BTD Phase 2, where tilt should score candidates against the
@@ -202,6 +206,7 @@ class FB(AbstractAgent):
         self._tilt_start_step = tilt_start_step
         self._tilt_goal = tilt_goal
         self._tilt_refresh_interval = max(1, tilt_refresh_interval)
+        self._tilt_free_compete = tilt_free_compete
 
         # Snapshot/restore RNG state around tilt's own draws so building it
         # has zero effect on the shared torch/cuda RNG stream -- otherwise
@@ -281,10 +286,17 @@ class FB(AbstractAgent):
         )[0]
         sphere_count = self.batch_size - len(mix_indices)
         sphere_features = None
-        if self.tilt is not None and step >= self._tilt_start_step:
+        if self.tilt is not None:
             self.tilt.temperature = self._tilt_temperature(step)
         score_this_step = self._tilt_score_this_step(step)
-        if self._tilt_active(step) and sphere_count > 0:
+        # Scoring (and thus the Gram/feat_ms update below) runs from step 0
+        # regardless of tilt_start_step, so the Gram is already warmed up by
+        # the time tilt_start_step is reached instead of starting its EMA
+        # from identity right when selection turns on. Only the resulting
+        # z SELECTION is gated on _tilt_active -- sample_mixed_z falls back to
+        # plain sample_z pre-activation, so the pool built here is simply
+        # unused (but not wasted) until then.
+        if self.tilt is not None and sphere_count > 0:
             if score_this_step:
                 _, sphere_features = self.tilt.refresh(
                     init_features=batch.observations,
@@ -300,10 +312,11 @@ class FB(AbstractAgent):
                     return_features=True,
                     num_samples=sphere_count,
                 )
-            else:
+            elif self._tilt_active(step):
                 # Cheap path: no new forward passes -- re-select from the last
                 # refresh()'s cached candidate pool at the current temperature
-                # (see TiltLatentSelector.resample).
+                # (see TiltLatentSelector.resample). Only meaningful once
+                # active, since the pool is otherwise unused pre-activation.
                 self.tilt.resample(n=sphere_count)
         zs, goal_features, goal_fraction = self.sample_mixed_z(
             train_goal=backward_input,
@@ -314,6 +327,20 @@ class FB(AbstractAgent):
             mix_indices=mix_indices,
             score=score_this_step,
         )
+        # Free competition: z_mix_ratio above only decided how much of the
+        # sphere/goal candidate pools feed into the Gram (goal_fraction
+        # weighting, untouched). Here it's overridden for the actual zs USED
+        # this step -- sphere and goal candidates are pooled and reselected
+        # jointly by score, so whichever pool has the higher leverage wins
+        # more of the batch instead of the fixed z_mix_ratio split.
+        if (
+            self.tilt is not None
+            and self._tilt_free_compete
+            and self._tilt_active(step)
+            and self.tilt._candidate_z is not None
+            and self.tilt.goal_candidate_z is not None
+        ):
+            zs = self._tilt_free_compete_select()
         if sphere_features is not None:
             gram_batches = [(sphere_features, 1.0 - goal_fraction)]
             if goal_features is not None:
@@ -359,6 +386,24 @@ class FB(AbstractAgent):
     def _tilt_active(self, step: int) -> bool:
         return self.tilt is not None and step >= self._tilt_start_step
 
+    @torch.no_grad()
+    def _tilt_free_compete_select(self) -> torch.Tensor:
+        """Pool the sphere and goal candidate pools (same shared Gram/score
+        scale, so directly comparable) and jointly weighted_select batch_size
+        z's from the union -- whichever pool actually carries more leverage
+        wins more of the batch, instead of the fixed z_mix_ratio split used
+        for the Gram's own bookkeeping. Requires both caches to be populated
+        (checked by the caller)."""
+        combined_z = torch.cat([self.tilt._candidate_z, self.tilt.goal_candidate_z], dim=0)
+        combined_score = torch.cat(
+            [self.tilt._candidate_score, self.tilt.goal_candidate_score], dim=0
+        )
+        idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
+            combined_score, self.tilt.temperature, self.batch_size,
+            self.tilt.uniform_mix, self.tilt.linear,
+        )
+        return combined_z[idx]
+
     @property
     def tilt_goal(self) -> bool:
         return self._tilt_goal
@@ -371,10 +416,15 @@ class FB(AbstractAgent):
         multinomial, no new forward passes) from the LAST scoring step's
         cached candidate pool via TiltLatentSelector.resample(), so the pool
         itself goes stale until the next scoring step but the selection stays
-        informed rather than falling back to plain random."""
-        if not self._tilt_active(step):
+        informed rather than falling back to plain random.
+
+        Runs on this cadence from step 0 regardless of tilt_start_step (not
+        gated on _tilt_active) so the Gram/feat_ms EMA is already warmed up by
+        the time selection actually turns on, instead of starting from
+        identity right at tilt_start_step."""
+        if self.tilt is None:
             return False
-        return (step - self._tilt_start_step) % self._tilt_refresh_interval == 0
+        return step % self._tilt_refresh_interval == 0
 
     @torch.no_grad()
     def sample_mixed_z(
@@ -417,12 +467,20 @@ class FB(AbstractAgent):
         goal_fraction = len(mix_indices) / self.batch_size
         if train_goal is not None:
             if len(mix_indices) > 0:
-                if self._tilt_active(step):
+                tilt_active = self._tilt_active(step)
+                # Score the goal-candidate pool (and thus feed the shared
+                # Gram, same tilt.gram the sphere pool updates) from step 0 on
+                # scoring steps regardless of tilt_active -- mirrors the
+                # sphere pool's warm-up decoupling above. Pre-activation the
+                # scored selection is discarded in favor of a plain backward-
+                # representation z below; only goal_features is kept.
+                scored_mix_zs = None
+                if self.tilt is not None and score:
                     if init_observations is None or init_timesteps is None:
                         raise ValueError(
                             "Goal Gram update requires initial observations and timesteps."
                         )
-                    mix_zs, goal_features = self.sample_goal_z_candidates(
+                    scored_mix_zs, goal_features = self.sample_goal_z_candidates(
                         train_goal=train_goal,
                         init_observations=init_observations,
                         init_timesteps=init_timesteps,
@@ -430,8 +488,22 @@ class FB(AbstractAgent):
                         step=step,
                         tilt_selection=self._tilt_goal,
                         return_features=True,
-                        score=score,
+                        score=True,
                     )
+                if tilt_active:
+                    if score:
+                        mix_zs = scored_mix_zs
+                    else:
+                        mix_zs = self.sample_goal_z_candidates(
+                            train_goal=train_goal,
+                            init_observations=init_observations,
+                            init_timesteps=init_timesteps,
+                            size=len(mix_indices),
+                            step=step,
+                            tilt_selection=self._tilt_goal,
+                            return_features=False,
+                            score=False,
+                        )
                 else:
                     mix_zs = self.FB.backward_representation(
                         train_goal[mix_indices]
@@ -517,6 +589,12 @@ class FB(AbstractAgent):
             if k == 1
             else self.score_from_features(goal_features, z_candidates)
         )
+        # Cache regardless of tilt_selection (not just when it's on) so the
+        # cheap score=False reuse path and free-competition selection (see
+        # _tilt_free_compete_select) both have a fresh goal pool to draw on
+        # even on calls where this particular selection was random/off.
+        self.tilt.goal_candidate_z = z_candidates
+        self.tilt.goal_candidate_score = candidate_score
         if tilt_selection:
             selected_idx, self.tilt.last_prob_min, self.tilt.last_prob_max = (
                 weighted_select(
@@ -524,8 +602,6 @@ class FB(AbstractAgent):
                     self.tilt.linear,
                 )
             )
-            self.tilt.goal_candidate_z = z_candidates
-            self.tilt.goal_candidate_score = candidate_score
         else:
             selected_idx = torch.randperm(candidate_size, device=train_goal.device)[
                 :size

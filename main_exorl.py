@@ -44,6 +44,7 @@ parser.add_argument("--tilt_start_step", type=int)
 parser.add_argument("--tilt_refresh_interval", type=int)
 parser.add_argument("--tilt_uniform_mix", type=float)
 parser.add_argument("--tilt_linear", action="store_true")
+parser.add_argument("--tilt_free_compete", action="store_true")
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -396,6 +397,7 @@ elif config["algorithm"] == "td_jepa":
         tilt_refresh_interval=config["tilt_refresh_interval"],
         tilt_uniform_mix=config["tilt_uniform_mix"],
         tilt_linear=config["tilt_linear"],
+        tilt_free_compete=config["tilt_free_compete"],
         actor_std=config["actor_std"],
         actor_use_full_encoder=config["actor_use_full_encoder"],
         symmetric=config["symmetric"],
@@ -490,6 +492,7 @@ elif config["algorithm"] == "fb":
         tilt_refresh_interval=config["tilt_refresh_interval"],
         tilt_uniform_mix=config["tilt_uniform_mix"],
         tilt_linear=config["tilt_linear"],
+        tilt_free_compete=config["tilt_free_compete"],
         device=config["device"],
         name=config["name"],
     )
@@ -567,6 +570,7 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         tilt_refresh_interval=config["tilt_refresh_interval"],
         tilt_uniform_mix=config["tilt_uniform_mix"],
         tilt_linear=config["tilt_linear"],
+        tilt_free_compete=config["tilt_free_compete"],
     )
 
     replay_buffer = FBReplayBuffer(
@@ -759,6 +763,7 @@ if config["checkpoint_path"] is not None:
             tilt_refresh_interval=config["tilt_refresh_interval"],
             tilt_uniform_mix=config["tilt_uniform_mix"],
             tilt_linear=config["tilt_linear"],
+            tilt_free_compete=config["tilt_free_compete"],
         )
 
 workspace = OfflineRLWorkspace(
