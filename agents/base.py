@@ -650,6 +650,7 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
         p_random_goal: float = 0.3,
         p_traj_goal: float = 0.5,
         p_currgoal_goal: float = 0.2,
+        storage_device: torch.device = None,
     ):
         super().__init__(device=device, transitions=transitions)
 
@@ -662,7 +663,14 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
         self._task = task
         self._relabel = relabel
         self._action_condition = action_condition
-        self.storage_device = torch.device("cpu")
+        # Where the (potentially huge) offline dataset lives. Defaults to CPU
+        # since the full dataset may not fit in GPU memory; pass
+        # storage_device=device to keep it on GPU instead and skip the
+        # per-sample() host<->device copy (see FBReplayBuffer/main_exorl.py's
+        # --replay_buffer_device).
+        self.storage_device = (
+            storage_device if storage_device is not None else torch.device("cpu")
+        )
         self.storage = {}
 
         # load dataset on init
@@ -863,6 +871,15 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
             self.storage["not_dones"] = self.storage["not_dones"][action_condition_idxs]
             self.storage["timesteps"] = self.storage["timesteps"][action_condition_idxs]
 
+        # move the assembled dataset onto storage_device once, in bulk,
+        # rather than per-field during construction above -- keeps the
+        # concatenation/indexing work above on CPU (fast, and avoids peak
+        # GPU memory from many transient per-episode GPU tensors) while
+        # still landing on GPU if the caller asked for it.
+        for key, value in self.storage.items():
+            if isinstance(value, torch.Tensor):
+                self.storage[key] = value.to(self.storage_device)
+
     def add_episode(self, episode: Dict[str, np.ndarray]) -> int:
         """
         Add a newly collected episode to the replay buffer using the same
@@ -990,17 +1007,17 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
             gciql_goals = gciql_goals[keep_indices]
 
         new_storage = {
-            "observations": observations,
-            "actions": actions,
-            "rewards": rewards,
-            "next_observations": next_observations,
-            "future_observations": future_observations,
-            "future_goals": future_goals,
-            "gciql_goals": gciql_goals,
-            "discounts": discounts,
+            "observations": observations.to(self.storage_device),
+            "actions": actions.to(self.storage_device),
+            "rewards": rewards.to(self.storage_device),
+            "next_observations": next_observations.to(self.storage_device),
+            "future_observations": future_observations.to(self.storage_device),
+            "future_goals": future_goals.to(self.storage_device),
+            "gciql_goals": gciql_goals.to(self.storage_device),
+            "discounts": discounts.to(self.storage_device),
             "physics": physics,
-            "timesteps": timesteps,
-            "not_dones": not_dones,
+            "timesteps": timesteps.to(self.storage_device),
+            "not_dones": not_dones.to(self.storage_device),
         }
 
         for key, value in new_storage.items():

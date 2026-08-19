@@ -74,6 +74,21 @@ parser.add_argument("--checkpoint_path", type=str, default=None)
 parser.add_argument("--actor_learning_rate", type=float, default=None)
 parser.add_argument("--resume_step", type=int, default=0)
 parser.add_argument("--eval_frequency", type=int, default=None)
+parser.add_argument(
+    "--replay_buffer_device",
+    type=str,
+    default="cpu",
+    choices=["cpu", "gpu"],
+    help=(
+        "Where the offline replay buffer's storage tensors live. 'cpu' "
+        "(default) keeps the full dataset in host RAM and copies each "
+        "sampled batch to the training device every step -- use this if "
+        "the dataset doesn't fit in GPU memory. 'gpu' keeps the dataset "
+        "resident on the training device, removing the per-step host<->"
+        "device copy and CPU-side indexing cost, but requires the whole "
+        "dataset to fit in GPU memory alongside the model."
+    ),
+)
 args = parser.parse_args()
 
 if args.wandb_logging == "True":
@@ -213,6 +228,9 @@ config["device"] = torch.device(
     if torch.cuda.is_available()
     else ("mps" if torch.backends.mps.is_built() else "cpu")
 )
+config["storage_device"] = (
+    config["device"] if config["replay_buffer_device"] == "gpu" else torch.device("cpu")
+)
 
 if config["collection_interval"] < 0 or config["collection_episodes"] < 0:
     raise ValueError("collection_interval and collection_episodes must be >= 0.")
@@ -312,6 +330,7 @@ if config["algorithm"] == "cql":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = None
@@ -348,6 +367,7 @@ elif config["algorithm"] == "td3":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = None
@@ -435,6 +455,7 @@ elif config["algorithm"] == "td_jepa":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = config["z_inference_steps"]
@@ -506,6 +527,7 @@ elif config["algorithm"] == "fb":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = config["z_inference_steps"]
@@ -582,6 +604,7 @@ elif config["algorithm"] in ("vcfb", "mcfb"):
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = config["z_inference_steps"]
@@ -621,6 +644,7 @@ elif config["algorithm"] == "gciql":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = config["z_inference_steps"]
@@ -673,6 +697,7 @@ elif config["algorithm"] == "sf-lap":
         device=config["device"],
         discount=config["discount"],
         action_condition=config["action_condition"],
+        storage_device=config["storage_device"],
     )
 
     z_inference_steps = config["z_inference_steps"]

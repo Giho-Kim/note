@@ -21,6 +21,7 @@ class FBReplayBuffer(OfflineReplayBuffer):
         relabel: bool = False,
         task: str = None,
         action_condition: dict = None,
+        storage_device: torch.device = None,
     ):
         super().__init__(
             reward_constructor=reward_constructor,
@@ -31,6 +32,7 @@ class FBReplayBuffer(OfflineReplayBuffer):
             relabel=relabel,
             task=task,
             action_condition=action_condition,
+            storage_device=storage_device,
         )
         self.reward_constructor = reward_constructor
 
@@ -92,6 +94,7 @@ class OnlineFBReplayBuffer(FBReplayBuffer):
         relabel: bool = False,
         task: str = None,
         action_condition: dict = None,
+        storage_device: torch.device = None,
     ):
         super().__init__(
             reward_constructor=reward_constructor,
@@ -102,6 +105,7 @@ class OnlineFBReplayBuffer(FBReplayBuffer):
             relabel=relabel,
             task=task,
             action_condition=action_condition,
+            storage_device=storage_device,
         )
 
         self.online_observations = np.zeros(
