@@ -56,6 +56,7 @@ class TDJEPAAgentTrainConfig(BaseConfig):
     tilt_refresh_interval: int = 1
     tilt_uniform_mix: float = 0.5
     tilt_linear: bool = False
+    tilt_free_compete: bool = False
 
 
 class TDJEPAAgentConfig(BaseConfig):
@@ -112,6 +113,7 @@ class TDJEPAAgent:
         tilt_refresh_interval: int = 1,
         tilt_uniform_mix: float = 0.5,
         tilt_linear: bool = False,
+        tilt_free_compete: bool = False,
     ) -> None:
         """(Re)builds self.tilt from scratch -- see FB.enable_tilt. Safe to
         call after __init__ (e.g. BTD Phase 2, where tilt should score
@@ -136,6 +138,7 @@ class TDJEPAAgent:
                 "tilt_refresh_interval": max(1, tilt_refresh_interval),
                 "tilt_temperature_start": tilt_temperature_start,
                 "tilt_temperature_end": tilt_temperature_end,
+                "tilt_free_compete": tilt_free_compete,
             }
         )
         self.cfg = self.cfg.model_copy(update={"train": new_train_cfg})
@@ -244,6 +247,25 @@ class TDJEPAAgent:
         if step is None:
             return True
         return step >= self.cfg.train.tilt_start_step
+
+    @torch.no_grad()
+    def _tilt_free_compete_select(self) -> torch.Tensor:
+        """See FB._tilt_free_compete_select: pool the sphere and goal
+        candidate pools (same shared Gram/score scale, so directly
+        comparable) and jointly weighted_select batch_size z's from the
+        union -- whichever pool actually carries more leverage wins more of
+        the batch, instead of the fixed train_goal_ratio split used for the
+        Gram's own bookkeeping. Requires both caches to be populated
+        (checked by the caller)."""
+        combined_z = torch.cat([self.tilt._candidate_z, self.tilt.goal_candidate_z], dim=0)
+        combined_score = torch.cat(
+            [self.tilt._candidate_score, self.tilt.goal_candidate_score], dim=0
+        )
+        idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
+            combined_score, self.tilt.temperature, self.cfg.train.batch_size,
+            self.tilt.uniform_mix, self.tilt.linear,
+        )
+        return combined_z[idx]
 
     def _tilt_score_this_step(self, step: Optional[int]) -> bool:
         """See FB._tilt_score_this_step: z's are always freshly sampled every
@@ -522,6 +544,14 @@ class TDJEPAAgent:
             goal_mask=goal_mask,
             score=score_this_step,
         )
+        if (
+            self.tilt is not None
+            and self.cfg.train.tilt_free_compete
+            and self._tilt_active(step)
+            and self.tilt._candidate_z is not None
+            and self.tilt.goal_candidate_z is not None
+        ):
+            z = self._tilt_free_compete_select()
         if sphere_features is not None:
             gram_batches = [(sphere_features, 1.0 - goal_fraction)]
             if goal_features is not None:

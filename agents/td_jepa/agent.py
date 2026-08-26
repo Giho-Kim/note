@@ -117,6 +117,7 @@ class TDJEPA(AbstractAgent):
         tilt_refresh_interval: int = 1,
         tilt_uniform_mix: float = 0.5,
         tilt_linear: bool = False,
+        tilt_free_compete: bool = False,
     ):
         super().__init__(
             observation_length=observation_length,
@@ -214,6 +215,7 @@ class TDJEPA(AbstractAgent):
             tilt_refresh_interval=tilt_refresh_interval,
             tilt_uniform_mix=tilt_uniform_mix,
             tilt_linear=tilt_linear,
+            tilt_free_compete=tilt_free_compete,
         )
         cfg = TDJEPAAgentConfig(model=model_cfg, train=train_cfg, compile=compile)
         self.agent = MetaTDJEPAAgent(obs_space=self._obs_space, action_dim=action_length, cfg=cfg)
