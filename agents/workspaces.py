@@ -160,6 +160,23 @@ class OfflineRLWorkspace(AbstractWorkspace):
         persistent_best_model_path = None
 
         # sample set transitions for z inference
+        if len(replay_buffer.storage) == 0:
+            if self.collection_episodes <= 0:
+                raise ValueError(
+                    "An empty replay buffer requires --collection_episodes > 0 "
+                    "to collect an initial online seed batch."
+                )
+            logger.info(
+                "Replay buffer is empty; collecting {} initial episode(s) before training.",
+                self.collection_episodes,
+            )
+            self.collect_training_episodes(
+                agent=agent,
+                tasks=tasks,
+                replay_buffer=replay_buffer,
+                step=start_step,
+            )
+
         if isinstance(agent, (FB, SF, GCIQL, TDJEPA)):
             if self.domain_name == "point_mass_maze":
                 self.goal_states = {}
@@ -1015,7 +1032,8 @@ class OfflineRLWorkspace(AbstractWorkspace):
             # reinforce its own sampling bias.  This matches the non-tilted
             # collection policy even when the agent uses tilt for training:
             # z_mix_ratio goal-conditioned z's and the rest uniform sphere z's.
-            if np.random.random() < agent._z_mix_ratio:  # pylint: disable=protected-access
+            has_data = len(replay_buffer.storage) > 0
+            if has_data and np.random.random() < agent._z_mix_ratio:  # pylint: disable=protected-access
                 batch = replay_buffer.sample(1)
                 z = agent.sample_goal_z(train_goal=batch.observations, size=1)[0]
             else:
@@ -1060,7 +1078,14 @@ class OfflineRLWorkspace(AbstractWorkspace):
         agent.eval()
         if hasattr(agent, "std_dev_schedule") and self.train_std is not None:
             agent.std_dev_schedule = self.train_std
-        reward_dim = int(replay_buffer.storage["rewards"].shape[-1])
+        # ExORL datasets store scalar environment rewards.  Use that same
+        # schema for the initial online seed; once storage exists, preserve its
+        # reward dimensionality for all later collection.
+        reward_dim = (
+            int(replay_buffer.storage["rewards"].shape[-1])
+            if "rewards" in replay_buffer.storage
+            else 1
+        )
         episodes = []
         for _ in range(self.collection_episodes):
             condition = self._sample_training_condition(

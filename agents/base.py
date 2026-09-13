@@ -673,14 +673,19 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
         )
         self.storage = {}
 
-        # load dataset on init
-        self.load_offline_dataset(
-            reward_constructor=reward_constructor,
-            dataset_path=dataset_path,
-            relabel=relabel,
-            task=task,
-            action_condition=action_condition,
-        )
+        # A zero transition budget is online-from-scratch mode.  Leave the
+        # buffer empty; the workspace collects seed episodes before its first
+        # training update.  This also means dataset_path need not exist.
+        if transitions == 0:
+            logger.info("Starting with an empty replay buffer (online-from-scratch mode).")
+        else:
+            self.load_offline_dataset(
+                reward_constructor=reward_constructor,
+                dataset_path=dataset_path,
+                relabel=relabel,
+                task=task,
+                action_condition=action_condition,
+            )
 
     def load_offline_dataset(
         self,

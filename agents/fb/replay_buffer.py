@@ -56,7 +56,8 @@ class FBReplayBuffer(OfflineReplayBuffer):
                 "loaded."
             )
 
-        assert inference_steps <= len(self.storage["observations"])
+        # Sampling below is with replacement, so a small online seed buffer
+        # can still provide the requested number of task-inference samples.
 
         # sample transitions from the replay buffer for processing
         batch_indices = torch.randint(
