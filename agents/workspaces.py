@@ -63,7 +63,6 @@ class OfflineRLWorkspace(AbstractWorkspace):
     """
     Trains/evals/rollouts an offline RL agent given
     """
-    COLLECTION_TILT_TEMPERATURE = 5.0
     TILT_VERBOSE_INTERVAL = 20000
     SAVE_EVERY_INTERVAL = 100000
 
@@ -1004,33 +1003,6 @@ class OfflineRLWorkspace(AbstractWorkspace):
         )
         print(row, flush=True)
 
-    def _refresh_collection_tilt(
-        self,
-        agent: Union[CQL, FB, CFB, GCIQL, SF, TDJEPA],
-        replay_buffer: Union[OfflineReplayBuffer, FBReplayBuffer],
-        step: int,
-    ) -> None:
-        if not isinstance(agent, FB) or agent.tilt is None:
-            return
-
-        previous_temperature = agent.tilt.temperature
-        batch = replay_buffer.sample(agent.batch_size)
-        try:
-            agent.tilt.temperature = self.COLLECTION_TILT_TEMPERATURE
-            agent.tilt.refresh(
-                init_features=batch.observations,
-                init_timesteps=batch.timesteps,
-                sample_z=lambda size: agent.sample_z(size=size),
-                score_fn=lambda observations, z_candidates: agent.score_and_features(
-                    observations=observations,
-                    z=z_candidates,
-                    step=step,
-                ),
-                score_from_features_fn=agent.score_from_features,
-            )
-        finally:
-            agent.tilt.temperature = previous_temperature
-
     def _sample_training_condition(
         self,
         agent: Union[CQL, FB, CFB, GCIQL, SF, TDJEPA],
@@ -1038,16 +1010,16 @@ class OfflineRLWorkspace(AbstractWorkspace):
         step: int,
     ) -> Optional[np.ndarray]:
         if isinstance(agent, FB):
-            if agent.tilt is not None:
-                idx = torch.randint(
-                    agent.tilt.z.shape[0],
-                    (1,),
-                    device=agent.tilt.z.device,
-                )
-                z = agent.tilt.z[idx[0]]
-                return z.detach().cpu().numpy()
-            batch = replay_buffer.sample(agent.batch_size)
-            z = agent.sample_mixed_z(train_goal=batch.observations)[0]
+            # Collection deliberately stays independent of tilt: otherwise the
+            # leverage estimate can steer what is added to the buffer and then
+            # reinforce its own sampling bias.  This matches the non-tilted
+            # collection policy even when the agent uses tilt for training:
+            # z_mix_ratio goal-conditioned z's and the rest uniform sphere z's.
+            if np.random.random() < agent._z_mix_ratio:  # pylint: disable=protected-access
+                batch = replay_buffer.sample(1)
+                z = agent.sample_goal_z(train_goal=batch.observations, size=1)[0]
+            else:
+                z = agent.sample_z(size=1)[0]
             return z.detach().cpu().numpy()
 
         if isinstance(agent, SF):
@@ -1088,11 +1060,6 @@ class OfflineRLWorkspace(AbstractWorkspace):
         agent.eval()
         if hasattr(agent, "std_dev_schedule") and self.train_std is not None:
             agent.std_dev_schedule = self.train_std
-        self._refresh_collection_tilt(
-            agent=agent,
-            replay_buffer=replay_buffer,
-            step=step,
-        )
         reward_dim = int(replay_buffer.storage["rewards"].shape[-1])
         episodes = []
         for _ in range(self.collection_episodes):
