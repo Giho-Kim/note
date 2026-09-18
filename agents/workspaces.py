@@ -80,6 +80,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
         eval_std: Optional[float] = None,  # FB only
         collection_interval: int = 0,
         collection_episodes: int = 0,
+        initial_collection_episodes: Optional[int] = None,
         verbose: bool = False,
         save_every: bool = False,
     ):
@@ -103,6 +104,13 @@ class OfflineRLWorkspace(AbstractWorkspace):
         self.device = device
         self.collection_interval = collection_interval
         self.collection_episodes = collection_episodes
+        # Preserve the previous behavior unless the caller explicitly
+        # separates the initial seed collection from periodic collection.
+        self.initial_collection_episodes = (
+            collection_episodes
+            if initial_collection_episodes is None
+            else initial_collection_episodes
+        )
         self.verbose = verbose
         self.save_every = save_every  # save a checkpoint at every eval step, not just the best
         self._tilt_header_printed = False
@@ -161,20 +169,23 @@ class OfflineRLWorkspace(AbstractWorkspace):
 
         # sample set transitions for z inference
         if len(replay_buffer.storage) == 0:
-            if self.collection_episodes <= 0:
+            if self.initial_collection_episodes <= 0:
                 raise ValueError(
-                    "An empty replay buffer requires --collection_episodes > 0 "
-                    "to collect an initial online seed batch."
+                    "An empty replay buffer requires "
+                    "--initial_collection_episodes > 0 (or "
+                    "--collection_episodes > 0) to collect an initial "
+                    "online seed batch."
                 )
             logger.info(
                 "Replay buffer is empty; collecting {} initial episode(s) before training.",
-                self.collection_episodes,
+                self.initial_collection_episodes,
             )
             self.collect_training_episodes(
                 agent=agent,
                 tasks=tasks,
                 replay_buffer=replay_buffer,
                 step=start_step,
+                episodes_to_collect=self.initial_collection_episodes,
             )
 
         if isinstance(agent, (FB, SF, GCIQL, TDJEPA)):
@@ -1027,15 +1038,12 @@ class OfflineRLWorkspace(AbstractWorkspace):
         step: int,
     ) -> Optional[np.ndarray]:
         if isinstance(agent, FB):
-            # Collection deliberately stays independent of tilt: otherwise the
-            # leverage estimate can steer what is added to the buffer and then
-            # reinforce its own sampling bias.  This matches the non-tilted
-            # collection policy even when the agent uses tilt for training:
-            # z_mix_ratio goal-conditioned z's and the rest uniform sphere z's.
             has_data = len(replay_buffer.storage) > 0
-            if has_data and np.random.random() < agent._z_mix_ratio:  # pylint: disable=protected-access
+            if has_data:
                 batch = replay_buffer.sample(1)
-                z = agent.sample_goal_z(train_goal=batch.observations, size=1)[0]
+                z = agent.sample_rollout_z(
+                    train_goal=batch.observations, step=step
+                )
             else:
                 z = agent.sample_z(size=1)[0]
             return z.detach().cpu().numpy()
@@ -1070,9 +1078,15 @@ class OfflineRLWorkspace(AbstractWorkspace):
         tasks: List[str],
         replay_buffer: Union[OfflineReplayBuffer, FBReplayBuffer],
         step: int,
+        episodes_to_collect: Optional[int] = None,
     ) -> Dict[str, float]:
+        episodes_to_collect = (
+            self.collection_episodes
+            if episodes_to_collect is None
+            else episodes_to_collect
+        )
         logger.info(
-            f"Collecting {self.collection_episodes} episode(s) at training step {step}."
+            f"Collecting {episodes_to_collect} episode(s) at training step {step}."
         )
 
         agent.eval()
@@ -1087,7 +1101,7 @@ class OfflineRLWorkspace(AbstractWorkspace):
             else 1
         )
         episodes = []
-        for _ in range(self.collection_episodes):
+        for _ in range(episodes_to_collect):
             condition = self._sample_training_condition(
                 agent=agent,
                 replay_buffer=replay_buffer,

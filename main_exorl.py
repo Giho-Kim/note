@@ -60,6 +60,16 @@ parser.add_argument("--learning_steps", type=int, default=1000000)
 parser.add_argument("--z_inference_steps", type=int, default=10000)
 parser.add_argument("--collection_interval", type=int, default=0)
 parser.add_argument("--collection_episodes", type=int, default=0)
+parser.add_argument(
+    "--initial_collection_episodes",
+    type=int,
+    default=None,
+    help=(
+        "Episodes to collect before the first training update when the replay "
+        "buffer is empty. Defaults to --collection_episodes for backward "
+        "compatibility."
+    ),
+)
 parser.add_argument("--run_name", type=str, default=None)
 parser.add_argument("--model_name", type=str, default=None)
 parser.add_argument("--lagrange", type=str, default="True")
@@ -232,8 +242,18 @@ config["storage_device"] = (
     config["device"] if config["replay_buffer_device"] == "gpu" else torch.device("cpu")
 )
 
-if config["collection_interval"] < 0 or config["collection_episodes"] < 0:
-    raise ValueError("collection_interval and collection_episodes must be >= 0.")
+if (
+    config["collection_interval"] < 0
+    or config["collection_episodes"] < 0
+    or (
+        config["initial_collection_episodes"] is not None
+        and config["initial_collection_episodes"] < 0
+    )
+):
+    raise ValueError(
+        "collection_interval, collection_episodes, and "
+        "initial_collection_episodes must be >= 0."
+    )
 if (config["collection_interval"] == 0) != (config["collection_episodes"] == 0):
     raise ValueError(
         "collection_interval and collection_episodes must both be set, or both be 0."
@@ -804,6 +824,7 @@ workspace = OfflineRLWorkspace(
     device=config["device"],
     collection_interval=config["collection_interval"],
     collection_episodes=config["collection_episodes"],
+    initial_collection_episodes=config["initial_collection_episodes"],
     verbose=config.get("verbose", False),
     save_every=config.get("save_every", False),
 )

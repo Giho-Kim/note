@@ -387,7 +387,7 @@ class FB(AbstractAgent):
         return self.tilt is not None and step >= self._tilt_start_step
 
     @torch.no_grad()
-    def _tilt_free_compete_select(self) -> torch.Tensor:
+    def _tilt_free_compete_select(self, size: Optional[int] = None) -> torch.Tensor:
         """Pool the sphere and goal candidate pools (same shared Gram/score
         scale, so directly comparable) and jointly weighted_select batch_size
         z's from the union -- whichever pool actually carries more leverage
@@ -398,8 +398,9 @@ class FB(AbstractAgent):
         combined_score = torch.cat(
             [self.tilt._candidate_score, self.tilt.goal_candidate_score], dim=0
         )
+        size = self.batch_size if size is None else size
         idx, self.tilt.last_prob_min, self.tilt.last_prob_max = weighted_select(
-            combined_score, self.tilt.temperature, self.batch_size,
+            combined_score, self.tilt.temperature, size,
             self.tilt.uniform_mix, self.tilt.linear,
         )
         return combined_z[idx]
@@ -1017,6 +1018,49 @@ class FB(AbstractAgent):
         return math.sqrt(self._z_dimension) * torch.nn.functional.normalize(
             z, dim=1
         )
+
+    @torch.no_grad()
+    def sample_rollout_z(self, train_goal: torch.Tensor, step: int) -> torch.Tensor:
+        """Draw one collection latent from the training z distribution.
+
+        A rollout happens immediately after that step's network update, so its
+        tilt candidate caches already reflect the same refresh cadence, ridge,
+        candidate multiplier, temperature, uniform mix, and linear-selection
+        settings used for training.  Re-selecting from those caches is the
+        one-sample counterpart of the update path; it deliberately does not
+        refresh or update the Gram a second time just to collect an episode.
+        """
+        if self.tilt is not None:
+            self.tilt.temperature = self._tilt_temperature(step)
+
+        tilt_active = self._tilt_active(step)
+        if (
+            tilt_active
+            and self._tilt_free_compete
+            and self.tilt._candidate_z is not None
+            and self.tilt.goal_candidate_z is not None
+        ):
+            return self._tilt_free_compete_select(size=1)[0]
+
+        use_goal = np.random.random() < self._z_mix_ratio
+        if use_goal:
+            if tilt_active:
+                return self.sample_goal_z_candidates(
+                    train_goal=train_goal,
+                    init_observations=train_goal,
+                    init_timesteps=torch.empty(
+                        0, dtype=torch.long, device=train_goal.device
+                    ),
+                    size=1,
+                    step=step,
+                    tilt_selection=self._tilt_goal,
+                    score=False,
+                )[0]
+            return self.sample_goal_z(train_goal=train_goal, size=1)[0]
+
+        if tilt_active and self.tilt._candidate_z is not None:
+            return self.tilt.resample(n=1)[0]
+        return self.sample_z(size=1)[0]
 
     def infer_z(
         self, observations: torch.Tensor, rewards: Optional[torch.Tensor] = None
