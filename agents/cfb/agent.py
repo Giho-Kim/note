@@ -65,6 +65,7 @@ class CFB(FB):
         tilt_refresh_interval: int = 1,
         tilt_uniform_mix: float = 0.5,
         tilt_linear: bool = False,
+        tilt_free_compete: bool = False,
     ):
         assert vcfb != mcfb
         self.vcfb = vcfb
@@ -122,6 +123,7 @@ class CFB(FB):
             tilt_refresh_interval=tilt_refresh_interval,
             tilt_uniform_mix=tilt_uniform_mix,
             tilt_linear=tilt_linear,
+            tilt_free_compete=tilt_free_compete,
         )
 
         # total_action_samples must be divisible by 4
