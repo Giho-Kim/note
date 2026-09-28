@@ -730,11 +730,9 @@ else:
 if config["checkpoint_path"] is not None:
     checkpoint_path = Path(config["checkpoint_path"])
     print(f"Loading agent checkpoint from {checkpoint_path}")
-    if isinstance(agent, TDJEPA):
-        # TD-JEPA checkpoints are directories containing config/model/
-        # optimizer files, unlike the single-file torch pickles used by the
-        # other agents.  Keep the freshly constructed ZSRL wrapper and load
-        # the vendored TD-JEPA agent into it.
+    if isinstance(agent, TDJEPA) and checkpoint_path.is_dir():
+        # Backward compatibility for TD-JEPA checkpoints created before its
+        # checkpoint format was aligned with FB's single-file pickle format.
         agent.load(checkpoint_path)
     else:
         agent = torch.load(
@@ -743,7 +741,13 @@ if config["checkpoint_path"] is not None:
             weights_only=False,
         )
         agent.to(config["device"])
-        agent._device = config["device"]  # pylint: disable=protected-access
+        if isinstance(agent, TDJEPA):
+            # The vendored agent is held by the wrapper rather than
+            # registered as a torch child module, so move it explicitly.
+            agent.device = config["device"]
+            agent.agent._model.to(config["device"])  # pylint: disable=protected-access
+        else:
+            agent._device = config["device"]  # pylint: disable=protected-access
     # checkpoint saves overwrite agent._name with the (int) step number just
     # before pickling (see OfflineRLWorkspace.train), which then breaks
     # wandb.init(tags=[agent.name]) on resume -- restore the algorithm name.

@@ -325,11 +325,11 @@ class TDJEPA(AbstractAgent):
         return z.squeeze(0).detach().cpu().numpy()
 
     def save(self, dir_path: Path) -> Path:
-        output_path = dir_path / str(self.name)
-        self.agent.save(str(output_path))
-        return output_path
+        """Save using the same single-file checkpoint format as FB."""
+        return super().save(dir_path)
 
     def load(self, filepath: Path):
+        """Load a legacy directory-format TD-JEPA checkpoint in place."""
         load_device = self.device.type if self.device.type in {"cpu", "cuda"} else "cpu"
         loaded = MetaTDJEPAAgent.load(str(filepath), device=load_device)
         self.agent = loaded

@@ -50,8 +50,8 @@ parser.add_argument("--dataset_transitions", type=int, default=100000)
 # config.yaml as-is, matching main_exorl.py's level of exposure for it) ---
 parser.add_argument("--phase1_checkpoint_dir", type=str, default=None)
 # If set, loads this checkpoint instead of running Phase 1 training at all
-# (fb: a final.pickle from a previous --phase1_checkpoint_dir save; td_jepa:
-# a directory saved the same way). Only Phase 1's GMM build + Phase 2 run.
+# (a final.pickle from a previous --phase1_checkpoint_dir save). Legacy
+# directory-format TD-JEPA checkpoints are also accepted.
 parser.add_argument("--phase1_checkpoint_path", type=str, default=None)
 parser.add_argument("--phase1_learning_steps", type=int, default=2000000)
 
@@ -349,7 +349,17 @@ else:  # td_jepa
         )
     if args.phase1_checkpoint_path is not None:
         print(f"Loading Phase 1 checkpoint from {args.phase1_checkpoint_path}, skipping Phase 1 training...")
-        agent.load(args.phase1_checkpoint_path)
+        checkpoint_path = Path(args.phase1_checkpoint_path)
+        if checkpoint_path.is_dir():
+            # Backward compatibility for old TD-JEPA checkpoints.
+            agent.load(checkpoint_path)
+        else:
+            agent = torch.load(
+                checkpoint_path, map_location=device, weights_only=False
+            )
+            agent.to(device)
+            agent.device = device
+            agent.agent._model.to(device)  # pylint: disable=protected-access
     discount_for_replay_buffer = agent.agent.cfg.train.discount
     train_std = None
 
