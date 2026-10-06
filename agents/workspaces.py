@@ -1154,13 +1154,6 @@ class OfflineRLWorkspace(AbstractWorkspace):
             agent_kind = "td_jepa"
             agent_label = "TD-JEPA"
         elif isinstance(agent, FB):
-            if agent.tilt is None:
-                print(
-                    "[fb trajectories] skipped: FB tilt/gram is unavailable; "
-                    "run with --tilt to enable leverage-colored plots.",
-                    flush=True,
-                )
-                return
             plot_agent = agent
             agent_kind = "fb"
             agent_label = "FB"
