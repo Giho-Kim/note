@@ -35,6 +35,7 @@ def parse_args():
     parser.add_argument("--bc-coeff", type=float)
     parser.add_argument("--ortho-coef", type=float)
     parser.add_argument("--lr-backward", type=float)
+    parser.add_argument("--phi_dim", "--phi-dim", type=int, help="State representation output dimension: TD-JEPA phi_dim / FB L_dim")
     parser.add_argument("--no-eval", action="store_true")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--wandb-project", default="note-ogbench")
@@ -64,6 +65,9 @@ def parse_args():
             parser.error(f"--{key.replace('_', '-')} must be positive")
     if args.learning_steps < 0 or args.num_workers < 0:
         parser.error("learning steps and number of workers must be non-negative")
+    if args.phi_dim is not None:
+        if args.phi_dim <= 0:
+            parser.error("--phi_dim must be positive")
     return args
 
 
@@ -71,6 +75,10 @@ def build_config(args):
     mode = "proprio" if args.obs_type == "state" else "pixel"
     with (ROOT / "configs" / "ogbench" / f"{args.algorithm}_{mode}.json").open() as f:
         cfg = json.load(f)
+    phi_dim = getattr(args, "phi_dim", None)
+    if phi_dim is not None:
+        dimension_key = "L_dim" if args.algorithm == "fb" else "phi_dim"
+        cfg["agent"]["model"]["archi"][dimension_key] = phi_dim
     # Select the first regularization/lr combination in the upstream sweep.
     antmaze = args.domain.startswith("antmaze-")
     cfg["agent"]["train"]["bc_coeff"] = args.bc_coeff if args.bc_coeff is not None else (0.3 if antmaze else 3.0)
@@ -119,7 +127,7 @@ def build_config(args):
         explicit["lr_actor"] = cfg["agent"]["train"]["lr_actor"]
     cfg.update(
         seed=args.seed, num_train_steps=args.learning_steps,
-        work_dir=str((args.work_dir or ROOT / "results" / "ogbench" / f"{args.algorithm}_{args.domain}_{args.obs_type}_seed{args.seed}{'_tilt' if tilt_enabled else ''}").resolve()),
+        work_dir=str((args.work_dir or ROOT / "results" / "ogbench" / f"{args.algorithm}_{args.domain}_{args.obs_type}_seed{args.seed}{'_tilt' if tilt_enabled else ''}{f'_phi{phi_dim}' if phi_dim is not None else ''}").resolve()),
         buffer_device=args.buffer_device, eval_every_steps=args.eval_frequency,
         checkpoint_every_steps=args.checkpoint_frequency, log_every_updates=args.log_frequency,
         use_wandb=args.wandb, wandb_pname=args.wandb_project, wandb_gname=args.wandb_group,
@@ -139,6 +147,18 @@ def main():
     if args.dry_run:
         print(json.dumps(cfg, indent=2))
         return
+    if args.phi_dim is not None:
+        checkpoint_config = Path(cfg["work_dir"]) / "checkpoint" / "config.json"
+        if checkpoint_config.exists():
+            with checkpoint_config.open() as f:
+                saved = json.load(f)
+            dimension_key = "L_dim" if args.algorithm == "fb" else "phi_dim"
+            saved_dim = saved["model"]["archi"].get(dimension_key)
+            if saved_dim != args.phi_dim:
+                raise ValueError(
+                    f"Checkpoint {dimension_key}={saved_dim} differs from requested --phi-dim={args.phi_dim}. "
+                    "Use a different --work-dir to train a new architecture."
+                )
     os.environ.setdefault("MUJOCO_GL", "egl")
     from ogbench_impl.train import TrainConfig
 

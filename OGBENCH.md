@@ -20,6 +20,28 @@ Install a PyTorch CUDA build compatible with your machine's NVIDIA driver.
 For this workspace, `.venv-ogbench` has been prepared using the existing
 Python 3.12 `mujoco_playground` environment's CUDA 12.6 PyTorch build.
 
+On a new server, clone this repository and install a fresh environment rather
+than copying `.venv-ogbench` from another machine. For example, with Python
+3.11 and a driver compatible with the PyTorch CUDA 12.6 build:
+
+```bash
+git clone git@github.com:Giho-Kim/note.git
+cd note
+python3.11 -m venv .venv-ogbench
+.venv-ogbench/bin/python -m pip install --upgrade pip
+.venv-ogbench/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
+.venv-ogbench/bin/python -m pip install -r requirements-ogbench.txt
+.venv-ogbench/bin/python main_ogbench.py fb cube-single-play-v0 --download-only
+.venv-ogbench/bin/python main_ogbench.py fb cube-single-play-v0 --tilt
+# The prepared dataset is shared by the two algorithms:
+.venv-ogbench/bin/python main_ogbench.py td_jepa cube-single-play-v0 --tilt
+```
+
+Check the remote server's driver with `nvidia-smi` and choose its compatible
+PyTorch install command from [PyTorch's installer](https://pytorch.org/get-started/locally/).
+For CPU-only runs, omit the CUDA-specific install command and install the
+requirements directly. The remote server needs no sibling `td_jepa` checkout.
+
 ## Download and prepare data
 
 ```bash
@@ -63,6 +85,20 @@ python main_ogbench.py td_jepa antmaze-medium-navigate-v0 --dry-run
 Use `--bc-coeff`, `--ortho-coef`, and `--lr-backward` to select other upstream
 sweep settings. `--wandb` enables logging (`--wandb-project`, `--wandb-group`).
 See `--help` for training, evaluation, buffer-device, and episode-limit options.
+
+The state representation output dimension can be overridden with `--phi_dim`
+(or `--phi-dim`), for either state or pixel inputs. It changes TD-JEPA's
+`phi_dim` or FB's corresponding `L_dim`:
+
+```bash
+.venv-ogbench/bin/python main_ogbench.py td_jepa cube-single-play-v0 --phi_dim 256 --tilt
+.venv-ogbench/bin/python main_ogbench.py fb cube-single-play-v0 --phi-dim 256 --tilt
+```
+
+Without this option the reference defaults remain 50 for state and 256 for
+pixels; task dimension (`psi_dim` / FB `z_dim`) stays at 50. An explicit dimension adds `_phi256`
+(or the chosen value) to the default work directory. A checkpoint with a
+different dimension cannot be resumed; select a new `--work-dir` instead.
 
 ## Outputs and resume
 
