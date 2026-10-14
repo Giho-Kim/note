@@ -132,3 +132,9 @@ This work licensed under a standard MIT License, see `LICENSE.md` for further de
 
 
 
+# OGBench
+
+FB and TD-JEPA OGBench download, preprocessing, flow-BC training, and evaluation
+are available through `main_ogbench.py`. See [OGBENCH.md](OGBENCH.md) for setup,
+commands, defaults, and checkpoint/resume behavior.
+

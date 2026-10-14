@@ -1,0 +1,14 @@
+# Use a separate Python 3.11/3.12 environment; do not combine with legacy requirements.txt.
+torch>=2.3,<3
+numpy>=1.26,<3
+gymnasium>=1.0,<2
+mujoco>=3.1,<4
+ogbench>=1.1.2,<2
+pydantic>=2,<3
+safetensors>=0.4.4
+h5py>=3.11
+pandas>=2.2.3
+tqdm
+scipy>=1.11
+tyro>=0.9.3
+wandb>=0.22.3

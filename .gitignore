@@ -1,4 +1,7 @@
 __pycache__/
+.venv-ogbench/
+results/ogbench/
+_wandb/
 *.py[cod]
 
 wandb/

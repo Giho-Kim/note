@@ -1,0 +1,73 @@
+{
+  "num_train_steps": 1000000,
+  "data": {
+    "name": "ogbench",
+    "domain": "cube-single-play-v0",
+    "obs_type": "pixels",
+    "buffer_type": "parallel"
+  },
+  "env": {
+    "name": "ogbench",
+    "domain": "cube-single-play-v0",
+    "task": "cube-single-play-singletask-task1-v0",
+    "obs_type": "pixels",
+    "frame_stack": 3
+  },
+  "agent": {
+    "name": "FBFlowBCAgent",
+    "compile": true,
+    "model": {
+      "device": "cuda",
+      "obs_normalizer": {
+        "name": "RGBNormalizerConfig"
+      },
+      "archi": {
+        "f": {
+          "name": "ForwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 2
+        },
+        "actor": {
+          "name": "noise_conditioned_actor",
+          "hidden_dim": 512,
+          "hidden_layers": 2
+        },
+        "actor_vf": {
+          "hidden_layers": 4,
+          "hidden_dim": 512
+        },
+        "b": {
+          "name": "BackwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 4,
+          "norm": true
+        },
+        "left_encoder": {
+          "name": "BackwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 0,
+          "norm": true
+        },
+        "rgb_encoder": {
+          "name": "drq",
+          "feature_dim": 256
+        },
+        "augmentator": {
+          "name": "random_shifts",
+          "pad": 2
+        },
+        "L_dim": 256,
+        "z_dim": 50,
+        "norm_z": true
+      },
+      "actor_encode_obs": false
+    },
+    "train": {
+      "batch_size": 256,
+      "discount": 0.99,
+      "ortho_coef": 1.0,
+      "f_target_tau": 0.005,
+      "b_target_tau": 0.005
+    }
+  }
+}

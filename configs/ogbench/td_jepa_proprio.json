@@ -1,0 +1,70 @@
+{
+  "num_train_steps": 1000000,
+  "data": {
+    "name": "ogbench",
+    "domain": "cube-single-play-v0",
+    "obs_type": "state"
+  },
+  "env": {
+    "name": "ogbench",
+    "obs_type": "state",
+    "domain": "cube-single-play-v0",
+    "task": "cube-single-play-singletask-task1-v0"
+  },
+  "agent": {
+    "name": "TDJEPAFlowBCAgent",
+    "compile": true,
+    "model": {
+      "device": "cuda",
+      "obs_normalizer": {
+        "name": "IdentityNormalizerConfig"
+      },
+      "archi": {
+        "phi_predictor": {
+          "name": "ForwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 2
+        },
+        "psi_predictor": {
+          "name": "ForwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 2
+        },
+        "actor": {
+          "name": "noise_conditioned_actor",
+          "hidden_dim": 512,
+          "hidden_layers": 2
+        },
+        "actor_vf": {
+          "hidden_layers": 4,
+          "hidden_dim": 512
+        },
+        "phi_mlp_encoder": {
+          "name": "BackwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 4,
+          "norm": true
+        },
+        "psi_mlp_encoder": {
+          "name": "BackwardArchi",
+          "hidden_dim": 512,
+          "hidden_layers": 4,
+          "norm": true
+        },
+        "phi_dim": 50,
+        "psi_dim": 50,
+        "norm_z": true
+      },
+      "actor_use_full_encoder": false
+    },
+    "train": {
+      "batch_size": 256,
+      "discount": 0.99,
+      "phi_ortho_coef": 1.0,
+      "psi_ortho_coef": 1.0,
+      "encoder_target_tau": 0.005,
+      "predictor_target_tau": 0.005,
+      "scale_train_goals": true
+    }
+  }
+}

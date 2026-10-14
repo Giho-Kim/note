@@ -72,7 +72,17 @@ def weighted_select(
     n_total = candidate_score.shape[0]
     n = min(n, n_total)
     if linear:
-        weighted_prob = candidate_score / candidate_score.sum()
+        # Zero features/goals can occur early in training. A zero-score pool
+        # has no preference, so use uniform weights instead of producing NaNs.
+        weights = candidate_score.clamp_min(0)
+        tiny = torch.finfo(weights.dtype).tiny
+        weights = weights / weights.max().clamp_min(tiny)
+        total = weights.sum()
+        weighted_prob = torch.where(
+            total > 0,
+            weights / total.clamp_min(tiny),
+            torch.full_like(weights, 1.0 / n_total),
+        )
     else:
         logits = candidate_score / temperature
         logits = logits - logits.max()
