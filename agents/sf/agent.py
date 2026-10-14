@@ -112,8 +112,8 @@ class SF(AbstractAgent):
             device=device,
         )
 
-        self.encoder = torch.nn.Identity()  # TODO: add encoder for pixels
-        self.augmentation = torch.nn.Identity()  # TODO: add augmentation for pixels
+        self.encoder = torch.nn.Identity()
+        self.augmentation = torch.nn.Identity()
 
         # optimisers
         self.sf_optimizer = torch.optim.Adam(

@@ -1038,12 +1038,14 @@ class OfflineRLWorkspace(AbstractWorkspace):
         step: int,
     ) -> Optional[np.ndarray]:
         if isinstance(agent, FB):
+            # Keep online collection independent of tilt so the leverage-based
+            # training distribution cannot reinforce itself through the data
+            # subsequently added to the replay buffer. Collection follows the
+            # base FB mixture: z_mix_ratio goal z's, otherwise uniform sphere.
             has_data = len(replay_buffer.storage) > 0
-            if has_data:
+            if has_data and np.random.random() < agent._z_mix_ratio:  # pylint: disable=protected-access
                 batch = replay_buffer.sample(1)
-                z = agent.sample_rollout_z(
-                    train_goal=batch.observations, step=step
-                )
+                z = agent.sample_goal_z(train_goal=batch.observations, size=1)[0]
             else:
                 z = agent.sample_z(size=1)[0]
             return z.detach().cpu().numpy()

@@ -756,7 +756,6 @@ class OfflineReplayBuffer(AbstractOfflineReplayBuffer):
             timesteps.append(
                 torch.arange(len(episode["observation"]) - 1, dtype=torch.long)
             )
-            # hack the dones (we know last transition is terminal)
             not_done = torch.ones_like(torch.tensor(episode["reward"], dtype=torch.float32))
             not_done[-1] = 0
             not_dones.append(not_done)
@@ -1242,7 +1241,7 @@ class D4RLReplayBuffer(AbstractOfflineReplayBuffer):
 
         batch_indices = torch.randint(
             0, len(self.storage["observations"]), (batch_size,)
-        )  # TODO: make attribute of replay buffer
+        )
 
         return Batch(
             observations=self.storage["observations"][batch_indices].to(

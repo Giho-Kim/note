@@ -41,6 +41,9 @@ Check the remote server's driver with `nvidia-smi` and choose its compatible
 PyTorch install command from [PyTorch's installer](https://pytorch.org/get-started/locally/).
 For CPU-only runs, omit the CUDA-specific install command and install the
 requirements directly. The remote server needs no sibling `td_jepa` checkout.
+On a server with an existing checkout, run `git pull --ff-only` and continue
+using its existing `.venv-ogbench`; Git ignores that environment and the local
+datasets and results.
 
 ## Download and prepare data
 

@@ -1,6 +1,8 @@
-export WANDB_PROJECT=ICLR 
-python main_exorl.py td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 10 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.1 --tilt_goal --tilt_free_compete  --tilt_start_step 20000 --seed 42 --dataset_transitions 6000000
-python main_exorl.py td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 10 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.1 --tilt_goal --tilt_free_compete  --tilt_start_step 20000 --seed 43 --dataset_transitions 6000000
-python main_exorl.py td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 10 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.1 --tilt_goal --tilt_free_compete  --tilt_start_step 20000 --seed 44 --dataset_transitions 6000000
-python main_exorl.py td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 10 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.1 --tilt_goal --tilt_free_compete  --tilt_start_step 20000 --seed 45 --dataset_transitions 6000000
-python main_exorl.py td_jepa jaco rnd --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right  --tilt --tilt_ridge_min 1e-8  --tilt_candidate_multiplier 10 --tilt_refresh_interval 5 --tilt_init_geom_ratio 0.98 --tilt_ridge_alpha 1e-2 --tilt_linear --tilt_uniform_mix 0.1 --tilt_goal --tilt_free_compete  --tilt_start_step 20000 --seed 46 --dataset_transitions 6000000
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+for seed in ${SEEDS:-42 43 44 45 46}; do
+  python main_exorl.py td_jepa jaco rnd \
+    --eval_tasks reach_top_left reach_top_right reach_bottom_left reach_bottom_right \
+    --tilt --seed "$seed" --dataset_transitions 6350000 "$@"
+done

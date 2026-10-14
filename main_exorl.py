@@ -30,7 +30,8 @@ parser.add_argument("algorithm", type=str)
 parser.add_argument("domain_name", type=str)
 parser.add_argument("exploration_algorithm", type=str)
 parser.add_argument("--tilt", action="store_true")
-parser.add_argument("--tilt_goal", action="store_true")
+parser.add_argument("--tilt_goal", dest="tilt_goal", action="store_true", default=None)
+parser.add_argument("--no-tilt-goal", dest="tilt_goal", action="store_false", default=None)
 parser.add_argument("--tilting_by_z", action="store_true")
 parser.add_argument("--tilt_beta", type=float)
 parser.add_argument("--tilt_temperature", type=float)
@@ -43,8 +44,10 @@ parser.add_argument("--tilt_ridge_min", type=float)
 parser.add_argument("--tilt_start_step", type=int)
 parser.add_argument("--tilt_refresh_interval", type=int)
 parser.add_argument("--tilt_uniform_mix", type=float)
-parser.add_argument("--tilt_linear", action="store_true")
-parser.add_argument("--tilt_free_compete", action="store_true")
+parser.add_argument("--tilt_linear", dest="tilt_linear", action="store_true", default=None)
+parser.add_argument("--no-tilt-linear", dest="tilt_linear", action="store_false", default=None)
+parser.add_argument("--tilt_free_compete", dest="tilt_free_compete", action="store_true", default=None)
+parser.add_argument("--no-tilt-free-compete", dest="tilt_free_compete", action="store_false", default=None)
 parser.add_argument("--wandb_logging", type=str, default="True")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--alpha", type=float, default=0.01)
@@ -172,6 +175,14 @@ z_mix_ratio_override = cli_args.pop("z_mix_ratio", None)
 eval_frequency_override = cli_args.pop("eval_frequency", None)
 actor_learning_rate_override = cli_args.pop("actor_learning_rate", None)
 config.update(cli_args)
+tilt_defaults_active = args.tilt and args.algorithm in {"fb", "td_jepa"}
+for key, enabled in (
+    ("tilt_goal", True),
+    ("tilt_linear", True),
+    ("tilt_free_compete", True),
+):
+    if cli_args[key] is None:
+        config[key] = enabled if tilt_defaults_active else False
 if z_mix_ratio_override is not None:
     config["z_mix_ratio"] = z_mix_ratio_override
 if "z_mix_ratio" not in config:
@@ -232,6 +243,24 @@ if "tilt_uniform_mix" not in config:
     config["tilt_uniform_mix"] = 0.5
 if "tilt_linear" not in config:
     config["tilt_linear"] = False
+
+if tilt_defaults_active:
+    is_jaco = args.domain_name.lower() == "jaco"
+    tilt_defaults = {
+        "tilt_candidate_multiplier": (tilt_candidate_multiplier_override, 10),
+        "tilt_init_geom_ratio": (tilt_init_geom_ratio_override, 0.96 if is_jaco else 0.99),
+        "tilt_ridge_alpha": (tilt_ridge_alpha_override, 1e-2),
+        "tilt_ridge_min": (tilt_ridge_min_override, 1e-8),
+        "tilt_start_step": (tilt_start_step_override, 20000 if is_jaco else 200000),
+        "tilt_refresh_interval": (tilt_refresh_interval_override, 5),
+        "tilt_uniform_mix": (tilt_uniform_mix_override, 0.1),
+    }
+    for key, (override, default) in tilt_defaults.items():
+        if override is None:
+            config[key] = default
+    if actor_learning_rate_override is None:
+        config["actor_learning_rate"] = 3e-5
+        config["lr_actor"] = 3e-5
 
 config["device"] = torch.device(
     "cuda"

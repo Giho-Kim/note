@@ -156,3 +156,9 @@ The dataset can be downloaded once and shared by FB and TD-JEPA. See
 [OGBENCH.md](OGBENCH.md) for pixel runs, TD-JEPA commands, defaults, and
 checkpoint/resume behavior.
 
+If the repository and `.venv-ogbench` already exist on that server, run
+`git pull --ff-only` in the repository and keep using the same environment.
+The environment, downloaded datasets, and training results are ignored by Git,
+so pulling code does not remove them. Reinstall dependencies only when
+`requirements-ogbench.txt` changes or the environment needs repair.
+
