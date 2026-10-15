@@ -135,23 +135,26 @@ This work licensed under a standard MIT License, see `LICENSE.md` for further de
 # OGBench
 
 FB and TD-JEPA OGBench download, preprocessing, flow-BC training, and evaluation
-are available through `main_ogbench.py`. On another server, clone this repository
-and create a separate Python 3.11 or 3.12 environment for OGBench:
+are available through `main_ogbench.py`. On another server, Conda can create
+Python 3.11 inside the repository even if the server has no `python3.11`
+command. Activate that environment before installing and running anything:
 
 ```bash
 git clone git@github.com:Giho-Kim/note.git
 cd note
-python3.11 -m venv .venv-ogbench
-.venv-ogbench/bin/python -m pip install --upgrade pip
+conda create --prefix "$PWD/.venv-ogbench" python=3.11 pip -y
+conda activate "$PWD/.venv-ogbench"
+python -m pip install --upgrade pip
 # Example for an NVIDIA driver compatible with the PyTorch CUDA 12.6 build:
-.venv-ogbench/bin/python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
-.venv-ogbench/bin/python -m pip install -r requirements-ogbench.txt
-.venv-ogbench/bin/python main_ogbench.py fb cube-single-play-v0 --download-only
-.venv-ogbench/bin/python main_ogbench.py fb cube-single-play-v0 --tilt
+python -m pip install torch --index-url https://download.pytorch.org/whl/cu126
+python -m pip install -r requirements-ogbench.txt
+python main_ogbench.py td_jepa cube-single-play-v0 --download-only
+python main_ogbench.py td_jepa cube-single-play-v0 --tilt
 ```
 
 Use the matching PyTorch build for that server's GPU driver; replace the CUDA
 installation command if needed. CPU training does not need the CUDA command.
+If the repository or Conda environment already exists, skip its creation step.
 The dataset can be downloaded once and shared by FB and TD-JEPA. See
 [OGBENCH.md](OGBENCH.md) for pixel runs, TD-JEPA commands, defaults, and
 checkpoint/resume behavior.
