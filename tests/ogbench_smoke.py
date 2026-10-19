@@ -132,8 +132,9 @@ def run(device="cpu", tilt=False, compile=False):
                 if obs_type == "state":
                     assert (args.work_dir / "reward.csv").is_file()
                     summary_rows = pd.read_csv(args.work_dir / "reward_summary.csv")
-                    assert len(summary_rows) == 2
+                    assert len(summary_rows) == 4
                     assert "overall" in set(summary_rows["task"])
+                    assert set(summary_rows["timestep"]) == {0, args.learning_steps}
                     assert summary_rows[["reward_mean", "reward_iqm"]].notna().all().all()
                 params = copy.deepcopy(workspace.agent._model.state_dict())
                 cfg["num_train_steps"] = args.learning_steps + 1

@@ -237,7 +237,10 @@ class Workspace:
                     self.agent.log_tilt_health(t)
                 total_metrics = None
                 fps_start_time = time.time()
-        self.save(int(self.cfg.num_train_steps), replay_buffer)
+        final_step = int(self.cfg.num_train_steps)
+        self.save(final_step, replay_buffer)
+        if self.evaluate:
+            self.eval(final_step, replay_buffer=replay_buffer)
         if self.cfg.use_wandb:
             wandb.finish()
         return
